@@ -319,4 +319,3 @@ All objects constructed and wired by: Coordinator (app_main)
 
 ---
 
-*See also: [`runtime-model.md`](runtime-model.md) · [`event-model.md`](event-model.md)*
