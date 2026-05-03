@@ -60,3 +60,27 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+
+#esp
+build/
+sdkconfig
+sdkconfig.old
+
+
+# VS Code Settings
+.vscode/
+
+# eclipse setting
+.settings
+
+# MacOS directory files
+.DS_Store
+
+# cache dir
+.cache/
+
+# clang config (for LSP)
+.clangd
+.vscode/settings.json
+.vscode/c_cpp_properties.json
