@@ -1,0 +1,91 @@
+{
+  "project": {
+    "name": "LITU",
+    "repository": "https://github.com/ilyxas/LITU",
+    "summary": "LITU (Leading Into The Unknown) is a Swift iOS app that uses on-device LLMs (via MLX) as the intelligence layer for interactive experiences. It ships three active surfaces: a free-form local LLM chat, a soccer penalty mini-game where the goalkeeper AI is driven by an on-device language model, and a TCP gateway for sending binary-framed control commands to an external device (e.g. the esp-idf-raven ESP32 rover).",
+    "core_principle": "The project treats an on-device LLM as a reusable reasoning service. Each interactive experience provides a structured prompt contract and reads the model response as structured data (JSON), keeping game logic and AI inference cleanly separated. A parallel non-LLM surface (TcpGate) demonstrates the same app shell being used as a hardware-control panel over a binary TCP protocol."
+  },
+  "system_areas": {
+    "app_shell": {
+      "purpose": "Top-level entry point and surface switcher. Owns the mode-selection menu and hosts all active surfaces.",
+      "parts": {
+        "lituApp.swift": "SwiftUI App entry point, instantiates RootView as the single window.",
+        "App/RootView.swift": "Navigation shell with a Menu toolbar that switches among LocalLLMView, SoccerPenaltyView, TCPClientTestView, and TCPServerTestView. Owns top-level @State objects (LLMEvaluator, ChatModel, DeviceStat, SoccerPenaltyPlannerService) and a file importer hook for future JSON loading."
+      }
+    },
+    "llm_core": {
+      "purpose": "Reusable on-device LLM infrastructure that all experiences plug into. Handles model download, loading, session lifecycle, streaming/buffered generation, and per-response metrics.",
+      "parts": {
+        "Engine/LLMBasic/LLMEvaluator.swift": "Central model manager: selects from a catalogue of quantised models (Llama, Qwen, DeepSeek, Gemma, VLMs), downloads weights from HuggingFace via Hub, loads them through MLXModelFactory, and exposes GenerateParameters.",
+        "Engine/LLMBasic/ChatModel.swift": "Session wrapper around MLXLMCommon ChatSession. Exposes respondStream (streaming) and respondBuffered (full-response) APIs plus per-session metrics (tokens/sec, TTFT, total tokens).",
+        "Engine/LLMBasic/LMModel.swift": "Lightweight model descriptor (name, ModelConfiguration, type LLM vs VLM) used as the picker data source.",
+        "Engine/LLMBasic/DeviceStat.swift": "Polls device memory (active, cache, peak) for the metrics overlay."
+      }
+    },
+    "llm_chat_surface": {
+      "purpose": "Interactive chat UI surface: exposes the raw LLM chat session with model selection, generation settings, markdown/plain display toggle, and session management.",
+      "parts": {
+        "App/LocalLLMView.swift": "Primary chat view. Shows conversation history via OutputView, accepts user prompt, bridges to ChatModel. Contains embedded settings sheet for model picker, generation parameters, and session controls.",
+        "Engine/LLMBasic/MetricsView.swift": "Floating metrics bar showing tokens/sec, TTFT, total tokens, and memory pressure, used inside LocalLLMView.",
+        "Engine/LLMBasic/OutputView.swift": "Renders individual assistant messages, supporting plain text and MarkdownUI rendering."
+      }
+    },
+    "soccer_penalty_game": {
+      "purpose": "A 3D soccer penalty mini-game where physics simulation and LLM inference are combined: the player aims and kicks, the on-device LLM decides the goalkeeper's jump direction based on a structured prompt describing ball distance and shot sector.",
+      "parts": {
+        "App/SoccerPenaltyView.swift": "SwiftUI game UI: RealityKit ARView host, aim joystick, power meter, shoot button, score display, and LLM busy indicator.",
+        "Engine/MiniWorldService/SoccerPenaltyWorld.swift": "Observable world state: scene graph (ground, ball, goalpost, goalkeeper entities), physics step loop, phase state machine (aiming → powerSelection → ready → waitingLLM → ballInFlight → scored/blocked).",
+        "Engine/MiniWorldService/SoccerPenaltyModel.swift": "Shared data contract: PenaltyShotRequest (BallDistance + ShotDirection), GoalkeeperResponse (jumpDirection + intensity + note).",
+        "Engine/MiniWorldService/SoccerPenaltyPlannerService.swift": "Bridge between world and LLM. On each shot, serialises game state to JSON, sets goalkeeper system prompt, calls ChatModel.respondBuffered, polls until complete, parses GoalkeeperResponse.",
+        "Engine/MiniWorldService/LevelModel.swift": "Level-generation data types (LevelSegment enum, LevelResponse, LevelGenerationRequest) — scaffolding for a future LLM-driven level builder."
+      }
+    },
+    "web_runtime": {
+      "purpose": "Embeds a full WKWebView inside SwiftUI, with a navigation bar and JavaScript eval bridge. Exists as an engine component that can be placed into any surface.",
+      "parts": {
+        "Engine/Runtime/WebViewRuntime.swift": "WebViewStore (WKWebView owner, pub/sub loading state, JS eval), WebViewRegistry (singleton id→store map), and a SwiftUI wrapper view with address bar and back/forward controls."
+      }
+    },
+    "tcp_gate": {
+      "purpose": "Binary TCP communication layer that lets the iPhone send structured control commands to an external device (e.g. the esp-idf-raven ESP32 rover) over a local network. Operates independently of the LLM stack.",
+      "parts": {
+        "Engine/TcpGate/SimpleTCPClient.swift": "NWConnection-based TCP client. Frames outgoing messages as [msgId: UInt16 LE][size: UInt32 LE][payload: Data]. Supports text send, binary sendMessage, and continuous receive loop with a rolling 50-line log.",
+        "Engine/TcpGate/SimpleTCPServer.swift": "NWListener-based TCP server that accepts connections, echoes received data, and exposes a scrollable log. Used for on-device testing of the protocol.",
+        "App/TCPClientTestView.swift": "SwiftUI surface hosting SimpleTCPClient. Provides connect/disconnect buttons and a joystick that serialises JoystickPayload (x, y floats + timestamp) as msgId 0x1001, and nav-mode control buttons (0x1002 start manual, 0x1003 halt).",
+        "App/TCPServerTestView.swift": "SwiftUI surface hosting SimpleTCPServer. Start/stop buttons and a log list for testing the server side on-device."
+      }
+    },
+    "support_types": {
+      "purpose": "Shared low-level utilities and value types used across engine components.",
+      "parts": {
+        "Engine/Support/DynamicValue.swift": "Recursive Codable enum (string/number/bool/object/array/null) for decoding arbitrary JSON structures at runtime."
+      }
+    }
+  },
+  "system_flows": [
+    "User selects model → LLMEvaluator.load() downloads weights from HuggingFace → MLXModelFactory loads into memory → ChatModel.createSession() opens ChatSession",
+    "User types prompt in LocalLLMView → ChatModel.respondStream() → MLX generates token stream → OutputView updates live",
+    "Player aims and kicks in SoccerPenaltyView → SoccerPenaltyWorld transitions to waitingLLM → SoccerPenaltyPlannerService serialises PenaltyShotRequest → ChatModel.respondBuffered() → LLM returns JSON → GoalkeeperResponse decoded → goalkeeper entity jumps → world resolves scored/blocked",
+    "TCPClientTestView connects to rover IP → joystick drag → JoystickPayload serialised to binary (floats LE) → SimpleTCPClient.sendMessage(msgId:0x1001) → NWConnection sends [header][payload] frame to ESP32 rover over LAN",
+    "WebViewRuntime node instantiated with id → WebViewRegistry.store(for:) returns or creates WebViewStore → WKWebView loads URL → JS eval calls available via WebViewStore.evaluateJavaScript()"
+  ],
+  "reading_order_for_new_sessions": [
+    "README.md — one-line project description",
+    "lituApp.swift and App/RootView.swift — entry point, surface selection, top-level state ownership",
+    "Engine/LLMBasic/LLMEvaluator.swift — understand model catalogue, download/load lifecycle",
+    "Engine/LLMBasic/ChatModel.swift — understand the session abstraction and generation APIs",
+    "Engine/MiniWorldService/SoccerPenaltyModel.swift — read the JSON contract between game and LLM",
+    "Engine/MiniWorldService/SoccerPenaltyPlannerService.swift — see how the LLM is called as a game-logic service",
+    "Engine/MiniWorldService/SoccerPenaltyWorld.swift — understand the physics world and phase state machine",
+    "App/SoccerPenaltyView.swift and App/LocalLLMView.swift — surface UIs that tie LLM surfaces together",
+    "Engine/TcpGate/SimpleTCPClient.swift — binary framing protocol for hardware control; contrasts with LLM path",
+    "App/TCPClientTestView.swift — joystick UI and message-id usage; understand the rover control contract",
+    "Engine/Runtime/WebViewRuntime.swift — secondary capability, relevant only for web-embedding tasks",
+    "Engine/MiniWorldService/LevelModel.swift — forward-looking types for a future LLM level generator"
+  ],
+  "notes": {
+    "purpose": "This file is an architectural orientation map for new sessions. Its goal is to help an agent or contributor quickly understand the system's structure and reasoning, not to enumerate every file.",
+    "not_a_real_tree": "This file is not intended to mirror the repository filesystem exactly. Files are grouped by architectural responsibility, not by folder.",
+    "not_current_state": "Task-specific progress, recent changes, and temporary experiments should be tracked separately. This file describes stable architecture, not the current sprint."
+  }
+}

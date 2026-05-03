@@ -1,0 +1,223 @@
+{
+  "project": {
+    "name": "Raven",
+    "repository": "https://github.com/ilyxas/esp-idf-raven",
+    "summary": "ESP32 embedded firmware runtime for autonomous vehicle/robotics applications. Built on ESP-IDF and FreeRTOS, it defines strict role boundaries between orchestration (Activities), hardware/network subsystem workers (Services), thread-safe shared state (Controllers), an event-loop-backed broadcast bus (EventBus), and a TCP network gateway that decodes incoming messages and routes them to internal tasks. Wi-Fi connectivity and all subsystems are wired together at startup by a single root Coordinator (app_main).",
+    "core_principle": "Every piece of responsibility has exactly one owner. Activities decide what the system does (mode/FSM); Services do subsystem work and own hardware or network interaction; Controllers are the sole source of truth for shared data; EventBus carries broadcast facts without coupling producers to consumers; the Gateway translates external wire frames into internal task-queue messages; directed commands travel via typed queue messages. Business logic never executes inside an event callback or gateway decoder — callbacks and decoders are thin translators that forward to the owning task's queue."
+  },
+  "system_areas": [
+    {
+      "name": "Core Primitives",
+      "purpose": "Foundational base types shared across all runtime layers. Defines the message envelope and the reusable FreeRTOS task + queue wrapper that every Service, Activity, and Gateway task builds on.",
+      "parts": [
+        {
+          "ref": "components/raven_core/include/raven_core/base_task.hpp",
+          "role": "BaseTask — C++ wrapper around a FreeRTOS task and its inbound message queue. Provides start(), post_message(), set_tick_interval(), and the handle_message() / on_tick() override points. All non-trivial work runs inside the owner task via this interface."
+        },
+        {
+          "ref": "components/raven_core/include/raven_core/task_message.hpp",
+          "role": "TaskMessage — minimal struct (kind, id, payload, payload_size) that represents a directed command or self-message passed between components via their queues."
+        },
+        {
+          "ref": "components/raven_core/include/raven_core/SystemMonitorTask.hpp",
+          "role": "SystemMonitorTask — periodic diagnostic task (not a BaseTask subclass) that logs FreeRTOS stack high-water marks and optionally watches named queues. Runs independently at low priority."
+        }
+      ]
+    },
+    {
+      "name": "Event Bus",
+      "purpose": "Decoupled broadcast layer for system-wide facts. Wraps the ESP-IDF default event loop so producers and consumers are never coupled. Handlers must stay thin — all logic executes in the receiving task.",
+      "parts": [
+        {
+          "ref": "components/raven_events/include/raven_events/event_bus.hpp",
+          "role": "EventBus — static API (init, post, subscribe, unsubscribe) over esp_event_loop. The only place in the runtime where broadcast facts are published and received."
+        },
+        {
+          "ref": "components/raven_events/include/raven_events/navigation_events.hpp",
+          "role": "Defines NAVIGATION_EVENTS base and NAV_EVENT_MOVE_FORWARD_DONE — the reference typed broadcast event published by NavigationService and consumed by NavigationActivity."
+        }
+      ]
+    },
+    {
+      "name": "Shared State (Controllers)",
+      "purpose": "Thread-safe canonical state stores. The single source of truth for all system-wide data. Services write; Activities and other Services read. No tasks, no business logic — pure data with atomic or mutex protection.",
+      "parts": [
+        {
+          "ref": "components/raven_state/include/raven_state/navigation_state.hpp",
+          "role": "NavigationState — reference controller holding atomic x/y/z position floats and a mutex-protected JoystickData snapshot (x, y, timestamp_ms). Written by NavigationService (position) and PilotInputService (joystick); read by NavigationActivity during Manual mode polling."
+        }
+      ]
+    },
+    {
+      "name": "Services (Subsystem Workers)",
+      "purpose": "Asynchronous workers that encapsulate exactly one hardware subsystem or software domain. Each runs in its own FreeRTOS task, processes directed commands from its queue, writes results into shared state, and publishes broadcast events on noteworthy transitions.",
+      "parts": [
+        {
+          "ref": "components/raven_services/include/raven_services/base_service.hpp",
+          "role": "BaseService — thin specialization of BaseTask that marks a class as a subsystem worker. All concrete services inherit from this."
+        },
+        {
+          "ref": "components/raven_services/src/navigation_service.cpp",
+          "role": "NavigationService — handles MOVE_FORWARD commands: increments NavigationState.x, then publishes NAV_EVENT_MOVE_FORWARD_DONE. Reference implementation of the write-state → publish-event pattern."
+        },
+        {
+          "ref": "components/raven_services/src/pilot_input_service.cpp",
+          "role": "PilotInputService — sole writer of joystick data into NavigationState. Receives JOYSTICK_INPUT messages routed from NetworkGateway, validates the JoystickPayload, and writes the snapshot under the state mutex."
+        },
+        {
+          "ref": "components/raven_services/include/raven_services/pilot_messages.hpp",
+          "role": "Defines net_msg and msg_kind namespaces with all network-to-internal message IDs (JOYSTICK_INPUT, START_MANUAL_NAV, HALT_MANUAL_NAV, LLM_RESPONSE_TEXT) and payload structs (JoystickPayload, StartManualPayload, HaltManualPayload)."
+        }
+      ]
+    },
+    {
+      "name": "Activities (Orchestration / FSM)",
+      "purpose": "High-level behavioral layer. Each Activity owns a mode state machine and decides which services should be active and what they should do. Subscribes to events, receives directed messages, and posts commands to services — all processed in its own FreeRTOS task.",
+      "parts": [
+        {
+          "ref": "components/raven_activities/include/raven_activities/base_activity.hpp",
+          "role": "BaseActivity — thin specialization of BaseTask that marks a class as an orchestration / FSM component."
+        },
+        {
+          "ref": "components/raven_activities/src/navigation_activity.cpp",
+          "role": "NavigationActivity — three-state FSM (Idle / Working / Manual). Idle↔Working driven by MOVE_FORWARD commands and NAV_EVENT_MOVE_FORWARD_DONE events; Idle↔Manual driven by START_MANUAL_NAV / HALT_MANUAL_NAV network commands. In Manual state, a 100 ms periodic tick polls NavigationState for the latest joystick snapshot. Demonstrates thin EventBus callbacks, periodic tick, and directed command dispatch."
+        }
+      ]
+    },
+    {
+      "name": "Network Gateway",
+      "purpose": "Bidirectional external/internal boundary layer. The inbound side (NetworkGateway) accepts TCP connections, reads framed messages, decodes them, and routes TaskMessages to internal tasks. The outbound side (NetworkClientGateway) accepts TaskMessages from internal tasks, encodes them into wire frames, and sends them to a remote TCP server. Both sides use the same NetworkHeader wire contract and a symmetric decode/encode registry pattern.",
+      "parts": [
+        {
+          "ref": "components/raven_gateways/include/raven_gateways/network_gateway.hpp",
+          "role": "NetworkGateway (inbound/server) — owns a FreeRTOS task that runs the accept/read/decode/route loop. Exposes register_decoder(msg_id, IDecoder*) and register_route(msg_id, BaseTask*) for configuration. Built on TcpServer (IServer) and ILink abstractions."
+        },
+        {
+          "ref": "components/raven_gateways/include/raven_gateways/network_client_gateway.hpp",
+          "role": "NetworkClientGateway (outbound/client) — mirrors NetworkGateway in the reverse direction. Extends BaseTask so all socket I/O runs in its own task context, driven by the inbound message queue. On each dequeued TaskMessage, looks up the registered IEncoder by (kind, id), serialises the message into a NetworkHeader+payload frame, and writes it to the remote server via TcpClientLink, with lazy reconnect on link drop."
+        },
+        {
+          "ref": "components/raven_gateways/include/raven_gateways/network_header.hpp",
+          "role": "NetworkHeader — packed 6-byte wire frame header (msg_id uint16, payload_size uint32). The single shared wire contract used by both gateway directions."
+        },
+        {
+          "ref": "components/raven_gateways/include/raven_gateways/decoder.hpp",
+          "role": "IDecoder / FixedSizeDecoder / VariableSizeDecoder — validates incoming payloads and produces a DecodedMessageView (kind, id, payload, size). FixedSizeDecoder for typed structs; VariableSizeDecoder for strings and blobs (e.g. LLM responses)."
+        },
+        {
+          "ref": "components/raven_gateways/include/raven_gateways/encoder.hpp",
+          "role": "IEncoder / RawEncoder / EncodedFrame — outbound wire encoder interface and its reference implementation. RawEncoder prepends a NetworkHeader to the raw payload already in the TaskMessage, producing a single contiguous frame ready for a single TCP write. EncodedFrame is a non-owning view of the assembled buffer valid until the next encode() call."
+        },
+        {
+          "ref": "main/gateway_bootstrap.cpp",
+          "role": "configure_navigation_gateway — wires decoder and route registrations for the active inbound message set (JOYSTICK_INPUT → PilotInputService, START_MANUAL_NAV / HALT_MANUAL_NAV → NavigationActivity). The only place inbound routing policy is expressed."
+        }
+      ]
+    },
+    {
+      "name": "Platform Abstraction (TCP / Networking)",
+      "purpose": "Thin isolation layer between the gateway and ESP-IDF socket APIs. Defines IServer and ILink interfaces so NetworkGateway never calls BSD sockets directly, enabling future substitution of the transport.",
+      "parts": [
+        {
+          "ref": "components/raven_platform/include/raven_platform/IServer.hpp",
+          "role": "IServer — interface (start, stop, acceptConnection → unique_ptr<ILink>, isRunning). Implemented by TcpServer."
+        },
+        {
+          "ref": "components/raven_platform/include/raven_platform/TcpServer.hpp",
+          "role": "TcpServer — BSD socket TCP listener on a configured port. Calls accept() and wraps each accepted fd in a TcpSessionLink."
+        },
+        {
+          "ref": "components/raven_platform/include/raven_platform/ILink.hpp",
+          "role": "ILink — interface (read, write, close, isConnected). Implemented by TcpSessionLink (accepted server session) and TcpClientLink (outbound client connection)."
+        }
+      ]
+    },
+    {
+      "name": "Bootstrap / Coordinator",
+      "purpose": "Root composition point. The only location where all objects are constructed, injected with dependencies, and started. Contains no operational logic — it wires and launches.",
+      "parts": [
+        {
+          "ref": "main/app_main.cpp",
+          "role": "app_main — Coordinator entry point. Initialises NVS flash, brings up Wi-Fi (STA mode, blocks until connected or 10 retries), calls EventBus::init, constructs and starts NavigationService + PilotInputService + NavigationActivity, constructs TcpServer + NetworkGateway, calls configure_navigation_gateway (registers decoders and routes), then starts NetworkGateway + SystemMonitorTask."
+        },
+        {
+          "ref": "main/Kconfig.projbuild",
+          "role": "ESP-IDF project configuration (Wi-Fi SSID/password). Build-time hardware configuration entry point."
+        }
+      ]
+    }
+  ],
+  "system_flows": [
+    {
+      "name": "Boot and initialization",
+      "chain": "app_main → NVS flash init → Wi-Fi STA init + connect (blocks on event group) → EventBus::init → construct NavigationState → construct + start NavigationService, PilotInputService → construct + start NavigationActivity (subscribes to NAVIGATION_EVENTS) → construct TcpServer + NetworkGateway → configure_navigation_gateway (register decoders + routes) → start NetworkGateway + SystemMonitorTask"
+    },
+    {
+      "name": "External joystick input → Manual mode state update",
+      "chain": "TCP client sends NetworkHeader{JOYSTICK_INPUT} + JoystickPayload → NetworkGateway reads header + payload → FixedSizeDecoder validates size → decoded TaskMessage routed to PilotInputService queue → PilotInputService dequeues in its task → writes JoystickData into NavigationState (mutex) → NavigationActivity on_tick() (100 ms) reads NavigationState.get_joystick() and acts on x/y values"
+    },
+    {
+      "name": "Network command: enter / exit Manual mode",
+      "chain": "TCP client sends NetworkHeader{START_MANUAL_NAV} → NetworkGateway decodes → routes TaskMessage to NavigationActivity queue → Activity dequeues → FSM: Idle → Manual, calls set_tick_interval(100 ms) to enable joystick polling | TCP client sends HALT_MANUAL_NAV → same path → FSM: Manual → Idle, set_tick_interval(0)"
+    },
+    {
+      "name": "Directed command: MoveForward end-to-end",
+      "chain": "Coordinator (or future source) posts TaskMessage{MOVE_FORWARD} to NavigationActivity queue → Activity dequeues → FSM: Idle → Working → posts TaskMessage{MOVE_FORWARD} to NavigationService queue → Service dequeues → increments NavigationState.x (atomic) → publishes NAV_EVENT_MOVE_FORWARD_DONE via EventBus → thin callback on_nav_event posts MOVE_DONE to NavigationActivity queue → Activity dequeues → FSM: Working → Idle"
+    },
+    {
+      "name": "Shared state read path",
+      "chain": "Any layer needing current position → reads NavigationState.x/y/z via atomic load (lock-free for scalar reads) → observes latest value written by NavigationService | reads joystick snapshot via NavigationState.get_joystick() (mutex-protected) → observes latest value written by PilotInputService"
+    },
+    {
+      "name": "Outbound message: internal task → TCP client",
+      "chain": "Any internal component posts TaskMessage{kind, id, payload} to NetworkClientGateway queue → ClientGateway dequeues in its own task context → EncoderRegistry looks up IEncoder by (kind, id) → RawEncoder assembles EncodedFrame (NetworkHeader + raw payload bytes) → ensure_connected() opens TcpClientLink if not already open (lazy reconnect on drop) → ILink.write() sends the complete frame to the remote TCP server"
+    }
+  ],
+  "reading_order_for_new_sessions": [
+    {
+      "step": 1,
+      "ref": "docs/architecture.md",
+      "reason": "Defines the five layers (Activities, Services, Controllers, Coordinator, EventBus), their invariants, and the canonical interaction diagram. Read first to load the mental model before looking at any code."
+    },
+    {
+      "step": 2,
+      "ref": "components/raven_core/include/raven_core/base_task.hpp + task_message.hpp",
+      "reason": "BaseTask and TaskMessage are the mechanical backbone of every Service, Activity, and Gateway task. Understanding the task/queue/message pattern makes every other component immediately readable."
+    },
+    {
+      "step": 3,
+      "ref": "components/raven_events/include/raven_events/event_bus.hpp",
+      "reason": "EventBus is the broadcast half of the communication model. Understand its thin static API before reading any Service or Activity that publishes or subscribes."
+    },
+    {
+      "step": 4,
+      "ref": "components/raven_state/include/raven_state/navigation_state.hpp",
+      "reason": "NavigationState is the reference controller. Shows what a shared-state store looks like, and illustrates the two protection strategies: atomics for scalar position floats, mutex for the composite JoystickData snapshot."
+    },
+    {
+      "step": 5,
+      "ref": "components/raven_services/src/navigation_service.cpp + pilot_input_service.cpp",
+      "reason": "Two concrete Services: NavigationService shows the write-state → publish-event pattern; PilotInputService shows the gateway-message → mutex-protected-write pattern."
+    },
+    {
+      "step": 6,
+      "ref": "components/raven_activities/src/navigation_activity.cpp",
+      "reason": "The reference Activity. Shows the three-state FSM (Idle/Working/Manual), thin EventBus callbacks, periodic on_tick() joystick polling, and directed command dispatch to NavigationService."
+    },
+    {
+      "step": 7,
+      "ref": "components/raven_gateways/include/raven_gateways/network_gateway.hpp + decoder.hpp + network_client_gateway.hpp + encoder.hpp",
+      "reason": "Read the inbound (NetworkGateway + decoder hierarchy) and outbound (NetworkClientGateway + IEncoder/RawEncoder) sides together — the two halves are intentional mirrors and understanding the symmetry locks in the full gateway pattern."
+    },
+    {
+      "step": 8,
+      "ref": "main/app_main.cpp + main/gateway_bootstrap.cpp",
+      "reason": "The Coordinator and gateway wiring. Reading these last shows how all pieces are constructed, injected, and started — the composition root and the place where routing policy is expressed."
+    }
+  ],
+  "notes": {
+    "role_of_this_file": "project_map.json is a compact architectural orientation map intended to give a new agent or contributor a fast, high-signal mental model of the Raven runtime without requiring a full codebase read.",
+    "what_this_file_is_not": "This file is not an exact filesystem mirror, not a per-file inventory, not a changelog, not a task tracker, not a README rewrite, and not a full repository listing. It groups components by architectural meaning and includes only the most explanatory anchors for each system area.",
+    "current_state": "The repository contains a working reference implementation. NavigationService, PilotInputService, and NavigationActivity demonstrate each architectural pattern with real Wi-Fi and TCP networking. The LLM ingress route (LLM_RESPONSE_TEXT) is decoded but not yet routed to a service — commented out in gateway_bootstrap.cpp as a placeholder."
+  }
+}
