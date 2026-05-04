@@ -13,3 +13,8 @@ The iOS side is responsible for building a usable representation of that world, 
 The local LLM is intended as a semantic reasoning layer, not as a replacement for deterministic execution.
 
 The project is still evolving. Some current components are experimental or scaffolding layers used to validate architecture, protocol boundaries, local LLM integration, and visual runtime behaviour while the broader system direction is being shaped.
+
+
+For more details, see:
+- [`ESP/raven/docs/`](ESP/raven/docs/)
+- [`IOS/docs/`](IOS/docs/)
