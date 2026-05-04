@@ -3,8 +3,8 @@ R&amp;D platform combining on-device LLM intelligence in Swift (MLX) with a stri
 
 LITU - Raven is an under-development split system composed of:
 
-- **Raven (ESP)** — the embodied executor operating in the physical environment
-- **LITU (iOS)** — the higher-level interpretation and world-modelling layer
+- **Raven (ESP esp-idf)** — the embodied executor operating in the physical environment
+- **LITU (iOS swift 6)** — the higher-level interpretation and world-modelling layer
 
 The ESP side is responsible for sensing, movement, local reaction, and producing telemetry and state from contact with the world.
 
