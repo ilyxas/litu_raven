@@ -18,3 +18,8 @@ The project is still evolving. Some current components are experimental or scaff
 For more details, see:
 - [`ESP/raven/docs/`](ESP/raven/docs/)
 - [`IOS/docs/`](IOS/docs/)
+
+## Estimated token statistics
+
+- `IOS/litu/Engine`: **19,644** tokens
+- `ESP/raven/components`: **14,182** tokens
