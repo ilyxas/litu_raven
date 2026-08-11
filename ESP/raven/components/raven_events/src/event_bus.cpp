@@ -4,7 +4,11 @@ namespace raven {
 
 esp_err_t EventBus::init()
 {
-    return esp_event_loop_create_default();
+    const esp_err_t result = esp_event_loop_create_default();
+    // The default loop is shared with ESP-IDF facilities such as Wi-Fi. Raven
+    // can be composed before or after those facilities without treating an
+    // already-created loop as a startup failure.
+    return result == ESP_ERR_INVALID_STATE ? ESP_OK : result;
 }
 
 esp_err_t EventBus::post(esp_event_base_t base, int32_t id,

@@ -1,7 +1,6 @@
 #pragma once
 
-#include "raven_state/navigation_state.hpp"
-#include "raven_state/telemetry_state.hpp"
+#include "raven_state/flight_controller_state.hpp"
 
 // raven_state: thread-safe shared state controllers.
 // Controllers are the single source of truth for system-wide data.

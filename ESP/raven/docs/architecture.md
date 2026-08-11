@@ -6,7 +6,23 @@ This document defines the conceptual model of the Raven runtime, the role bounda
 
 ## Core Axioms
 
-The current concrete domains in Raven — navigation, telemetry, joystick input, manual mode, and the present state models — should be understood as early architectural probes, not as the final shape of the system. They were introduced quickly to test responsiveness, stress behaviour, ownership boundaries, routing discipline, and the interaction between message-driven and tick-driven execution. They are useful because they let the runtime be exercised under load and in motion, but they do not define the limit of the architecture. More serious capabilities will be added later, including richer sensor-driven navigation and more advanced autonomy.
+The navigation, synthetic telemetry, joystick-input, and manual-mode domains on the original `main` branch were architectural probes. They tested responsiveness, stress behaviour, ownership boundaries, routing discipline, and the interaction between message-driven and tick-driven execution. The product branch deliberately removes those concrete examples while retaining the roles and contracts they exercised. The first real vertical slice is a physical Betaflight flight-controller link over UART/MSP.
+
+## Product Branch Interpretation
+
+This branch is product-oriented rather than an extension of the former demo runtime. Reusable architectural mechanisms remain even when no current product object uses them. For example, `BaseActivity` remains part of the behavioural model while the branch has no concrete Activity yet, and the TCP gateways remain valid adapters while the first milestone exercises UART/MSP.
+
+The current product boundary is:
+
+```text
+ESP-IDF UART adapter
+    -> MSP framing and request/response gateway
+    -> Betaflight semantic client
+    -> FlightControllerService owner task
+    -> FlightControllerState and transition events
+```
+
+No layer is protected from change merely because it survived from `main`. Real hardware tests are expected to reveal where the execution substrate, ownership rules, or adapter contracts require revision.
 
 ### 1. Raven is a platform-independent behavioural system
 
@@ -127,11 +143,11 @@ The architecture loses clarity if an Activity starts doing low-level subsystem e
 
 Tick-based logic is not a workaround. It is part of the execution model.
 
-A system in which an Activity can, for example, terminate manual mode from its own periodic tick while the rest of the runtime continues to operate coherently demonstrates that Raven supports both:
+A system in which an Activity can change policy from its own periodic tick while the rest of the runtime continues to operate coherently demonstrates that Raven supports both:
 - message-driven behaviour,
 - time-driven behaviour.
 
-That matters more than any one navigation example. It shows that the substrate can support future policy loops, supervision, autonomy logic, and sensor-driven behaviour.
+It shows that the substrate can support future policy loops, supervision, autonomy logic, and sensor-driven behaviour.
 
 ### 13. Hardware is only one possible provider
 
@@ -144,16 +160,16 @@ Real hardware matters, but it is not the only legitimate source of system inputs
 
 The behavioural core should remain valid regardless of which provider is active. Only the lowest layer needs to know whether a source is real or synthetic.
 
-### 14. Current subsystems validate the architecture; they do not limit it
+### 14. Concrete subsystems exercise the architecture; they do not define it
 
-The current navigation, telemetry, joystick, and manual-control flows are useful because they let the architecture be exercised quickly. They validate:
+Concrete product and probe flows are useful because they force the architecture to demonstrate:
 - responsiveness,
 - stress handling,
 - message routing,
 - ownership boundaries,
 - the interaction between orchestration and execution.
 
-They should not be mistaken for the final conceptual boundary of Raven. They are present examples of the model, not its final scope.
+They should not be mistaken for the final conceptual boundary of Raven. A probe may be deleted after it has exposed the behaviour it was created to test, while its architectural conclusions remain subject to validation by real product hardware.
 
 The axioms above explain how the repository should be interpreted. The layer definitions below describe the stable role model used to realise those axioms in the current implementation.
 
@@ -318,4 +334,3 @@ All objects constructed and wired by: Coordinator (app_main)
 ```
 
 ---
-
