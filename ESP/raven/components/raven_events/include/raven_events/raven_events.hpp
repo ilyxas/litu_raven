@@ -2,7 +2,7 @@
 
 #include "esp_event.h"
 #include "raven_events/event_bus.hpp"
-#include "raven_events/navigation_events.hpp"
+#include "raven_events/flight_controller_events.hpp"
 
 // raven_events: event bus definitions.
 // Declare ESP-IDF event bases and event IDs for the Raven runtime here.

@@ -26,7 +26,7 @@ public:
 };
 
 // Fixed-size binary payload validator.
-// Good for structs like JoystickPayload, StartManualPayload, etc.
+// Good for fixed wire records with an explicitly registered payload contract.
 class FixedSizeDecoder final : public IDecoder {
 public:
     FixedSizeDecoder(uint16_t kind, size_t expected_size)
