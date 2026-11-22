@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.16)
+project(raven_host_tests LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+enable_testing()
+find_package(Threads REQUIRED)
+set(COMPONENTS "${CMAKE_CURRENT_LIST_DIR}/../../components")
+add_executable(runtime_test runtime_test.cpp
+    ${COMPONENTS}/raven_runtime/src/runtime.cpp
+    ${COMPONENTS}/raven_rnd/src/arm.cpp
+    ${COMPONENTS}/raven_rnd/src/protocol.cpp
+    ${COMPONENTS}/raven_rnd/src/self_test.cpp)
+target_include_directories(runtime_test PRIVATE ${COMPONENTS}/raven_runtime/include ${COMPONENTS}/raven_rnd/include)
+target_link_libraries(runtime_test PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(runtime_test PRIVATE /W4 /WX)
+else()
+    target_compile_options(runtime_test PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME runtime COMMAND runtime_test)
+# The existing POSIX serial protocol tests use ssize_t.
+if(NOT MSVC)
+    foreach(test msp_codec msp_client)
+        add_executable(${test}_test ${test}_test.cpp ${COMPONENTS}/raven_gateways/src/msp_codec.cpp)
+        target_include_directories(${test}_test PRIVATE ${COMPONENTS}/raven_gateways/include ${COMPONENTS}/raven_platform/include)
+        target_compile_options(${test}_test PRIVATE -Wall -Wextra -Werror)
+        add_test(NAME ${test} COMMAND ${test}_test)
+    endforeach()
+    target_sources(msp_client_test PRIVATE ${COMPONENTS}/raven_gateways/src/msp_client.cpp ${COMPONENTS}/raven_gateways/src/betaflight_msp_client.cpp)
+endif()

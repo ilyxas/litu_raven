@@ -1,3 +1,33 @@
+menu "Raven RND prototype"
+config RAVEN_RND_RUNTIME
+    bool "Run the virtual two-arm architecture prototype"
+    default y
+    help
+        Runs mock actuators, independent owner tasks, TCP delivery receipts,
+        operation status polling and telemetry. Does not drive actuator GPIOs.
+config RAVEN_RND_SELF_TEST
+    bool "Run deterministic and TCP loopback tests at boot"
+    default y
+    depends on RAVEN_RND_RUNTIME
+config RAVEN_RND_PORT
+    int "Incoming TCP command port"
+    range 1024 65535
+    default 8080
+config RAVEN_RND_WIFI_SSID
+    string "Station SSID (empty starts the Raven-RND development AP)"
+    default ""
+config RAVEN_RND_WIFI_PASSWORD
+    string "Station password"
+    default ""
+config RAVEN_RND_TELEMETRY_HOST
+    string "Outbound telemetry IPv4 (empty disables external telemetry)"
+    default ""
+config RAVEN_RND_TELEMETRY_PORT
+    int "Outbound telemetry port"
+    range 1024 65535
+    default 8080
+endmenu
+
 menu "Raven Flight Controller"
 
 config RAVEN_FC_LINK_ENABLED

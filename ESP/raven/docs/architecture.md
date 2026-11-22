@@ -1,5 +1,10 @@
 # Raven — Architecture
 
+> On the RND branch, [the executable two-arm prototype](rnd-runtime.md) and
+> [ADR-001](adr/0001-delivery-and-execution.md) describe the new delivery and
+> execution contracts. The role model below remains the conceptual background;
+> the FC-only composition described here is available as an alternate boot mode.
+
 This document defines the conceptual model of the Raven runtime, the role boundaries between its layers, and the architectural invariants that every contributor must respect. It should be read as the interpretation guide for the codebase, especially where temporary implementation shortcuts or early experimental subsystems might otherwise obscure the intended design.
 
 ---

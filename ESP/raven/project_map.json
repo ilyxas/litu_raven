@@ -2,10 +2,17 @@
   "project": {
     "name": "Raven",
     "target": "ESP32-S3",
-    "branch_intent": "Product-oriented Betaflight flight-controller integration",
+    "branch_intent": "RND: delivery receipts and owner execution with virtual arms; FC retained as alternate boot mode",
     "principle": "Concrete product objects may change freely; Activities, Services, State, Events, Gateways, Platform adapters, and the owner-context execution model remain explicit architectural roles until real hardware proves that a boundary must change."
   },
   "runtime_flow": [
+    "TCP Protocol / FrameReader",
+    "Dispatcher -> synchronous delivery ACK/NACK",
+    "Reserved critical / ordered / latest-value Inbox",
+    "Executor -> ArmService / DualArmActivity",
+    "OperationState -> status polling and outbound telemetry"
+  ],
+  "alternate_fc_flow": [
     "EspUartPort",
     "MspClient",
     "BetaflightMspClient",
@@ -13,6 +20,21 @@
     "FlightControllerState"
   ],
   "components": [
+    {
+      "name": "raven_runtime",
+      "architectural": ["Message", "Inbox", "Dispatcher", "Component", "Executor"],
+      "note": "Fixed-storage transport-independent execution substrate"
+    },
+    {
+      "name": "raven_rnd",
+      "product": ["ArmService", "DualArmActivity", "SimArmDriver", "OperationState", "Protocol", "FrameReader"],
+      "note": "Portable prototype behavior and deterministic self-tests"
+    },
+    {
+      "name": "raven_rnd_esp",
+      "product": ["OwnerTask", "Wi-Fi/TCP adapters", "Sensors", "Telemetry", "TCP loopback tests"],
+      "note": "ESP backend; virtual actuators only; no iOS source changes"
+    },
     {
       "name": "raven_core",
       "architectural": ["BaseTask", "TaskMessage", "SystemMonitorTask"],
@@ -58,10 +80,10 @@
     {
       "name": "main",
       "architectural": ["Explicit product composition root"],
-      "product": ["start_product_runtime"]
+      "product": ["start_rnd_runtime (default)", "start_product_runtime (alternate)"]
     }
   ],
-  "first_milestone": {
+  "alternate_fc_milestone": {
     "mode": "read-only",
     "requests": ["MSP_API_VERSION", "MSP_FC_VARIANT", "MSP_FC_VERSION"],
     "write_commands_exposed": false,
