@@ -21,8 +21,12 @@ and allocates every payload on the heap.
   replacement use those slots. Critical IDs are local subscription metadata,
   never an untrusted priority field in a packet.
 - Services own operation state and deadlines. Activities poll child status.
-  Final status is retained in a bounded 16-result history, with `Unknown` after
-  eviction or reboot. No result-receipt ACK is required.
+  External queries use a bounded 16-result history, with `Unknown` after eviction
+  or reboot. Active scenarios reserve fixed-capacity result handles before child
+  dispatch, so an unobserved result cannot be evicted by unrelated operations.
+  They remember terminal outcomes and release handles after observation or when
+  their wait ends. Exhaustion rejects the scenario before child dispatch.
+  No network result-receipt ACK or Activity-owned child deadline is required.
 - A critical cut is an idempotent request implemented by each owner. Its inbox
   sequence is a barrier against older queued goals. Subsequent goals may run;
   the architecture imposes no global latch, Reset command or reboot requirement.
@@ -38,6 +42,10 @@ and allocates every payload on the heap.
 - Broadcast delivery is not atomic. ACK/NACK contains accepted/rejected endpoint
   masks; a partial NACK does not undo deliveries. Pair orchestration also does
   not roll back already admitted children or cut unrelated goals on failure.
+- The command listener remains serviceable while a session is connected. The
+  newest connection replaces the previous controller and resets only transport
+  parsing. Accepted operations continue in their services. TCP keepalive also
+  cleans up dead sockets, but recovery with a new client does not wait for it.
 
 ## Alternatives and consequences
 
@@ -51,6 +59,15 @@ A reliable completion event bus would couple operation retention to observers.
 Polling retained state keeps execution independent of network consumers, at the
 cost of a documented retention window. Callers must not confuse `Unknown` with
 failure or automatically replay an evicted request.
+Internal scenario waits need stronger retention than this diagnostic history.
+Four explicit handles per state bound the memory cost and reject excess waits;
+enlarging the history alone would only postpone eviction. Handles retain state,
+not execution, and cannot extend or replace a service's deadline.
+
+Waiting for keepalive alone would delay reconnect behind probe expiry. Explicit
+session replacement provides immediate admission of a new controller; the trade-off
+is that a second connection takes over even from a healthy first controller.
+Multi-client arbitration is outside the current single-controller prototype.
 
 The old BaseTask and FC adapters remain available as the alternate boot mode.
 New code does not inherit them: its behavior can be tested with synthetic time
@@ -63,5 +80,7 @@ responsive by their tested state-machine/driver contracts.
 
 The deterministic suite tests queue saturation, critical repetition, deadline
 progress under ingress, retargeting, callback correlation, status retention,
-partial delivery and fragmented frames. Boot tests additionally use real FreeRTOS
-tasks and lwIP sockets while a telemetry consumer stops reading temporarily.
+partial delivery, fragmented frames, child-result eviction and phase-shifted
+retargeting. Boot tests additionally use real FreeRTOS tasks and lwIP sockets
+while a telemetry consumer stops reading temporarily and while a previous command
+client remains connected without closing its session.

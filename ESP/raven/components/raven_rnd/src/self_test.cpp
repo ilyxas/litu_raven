@@ -138,6 +138,94 @@ bool partial_delivery() {
     CHECK(f.dispatch.deliver(8, Message::make(Cut, 0, Empty{})).reason == Delivery::UnknownMessage);
     return true;
 }
+bool pair_remembers_observed_result() {
+    Fixture f;
+    f.dispatch.deliver(4, Message::make(Pair, 1, PairGoal{0, 180}));
+    f.advance(50);
+    CHECK(f.left.state.find(first_child_id).status == Status::Succeeded);
+    for (uint32_t id = 2; id < 18; ++id) { f.move(1, id, 0); f.advance(30); }
+    CHECK(f.left.state.find(first_child_id).status == Status::Unknown);
+    f.advance(2200);
+    CHECK(f.activity.state.find(1).status == Status::Succeeded);
+    return true;
+}
+bool pair_retains_unobserved_result() {
+    Fixture f;
+    f.dispatch.deliver(4, Message::make(Pair, 1, PairGoal{0, 180}));
+    f.ae.step(0); // Dispatch children, then withhold all Activity polls.
+    const auto arms_only = [&](unsigned ms) {
+        for (unsigned i = 0; i < ms; i += 10) { f.now += 10; f.le.step(f.now); f.re.step(f.now); }
+    };
+    arms_only(50);
+    for (uint32_t id = 2; id < 18; ++id) { f.move(1, id, 0); arms_only(30); }
+    CHECK(f.left.state.find(first_child_id).status == Status::Unknown);
+    f.advance(2200);
+    CHECK(f.activity.state.find(1).status == Status::Succeeded);
+    return true;
+}
+bool retarget_between_ticks() {
+    for (const auto mode : {DriverMode::Polling, DriverMode::Callback}) {
+        Fixture f;
+        f.ld.configure(mode);
+        f.dispatch.deliver(1, Message::make(Control, 1, Goal{90}));
+        f.le.step(0);
+        for (uint64_t t = 10; t <= 1000; t += 10) {
+            const float target = (t / 10) % 2 ? 91.0f : 90.0f;
+            f.dispatch.deliver(1, Message::make(Target, uint32_t(t), TargetValue{1, target}));
+            f.le.step(t - 1); // Nine milliseconds of old motion must survive.
+            f.le.step(t);
+        }
+        CHECK(std::fabs(f.left.state.current().position - 90) < 0.01f);
+        CHECK(f.left.state.current().status == Status::Running);
+    }
+    Fixture f;
+    f.ld.configure(DriverMode::Callback);
+    f.dispatch.deliver(1, Message::make(Control, 1, Goal{0.45f}));
+    f.le.step(0);
+    f.dispatch.deliver(1, Message::make(Target, 2, TargetValue{1, 90}));
+    f.le.step(9); // Sampling the old motion generates its completion callback.
+    f.le.step(10); // That queued callback must not overwrite the new position.
+    CHECK(std::fabs(f.left.state.current().position - 0.54f) < 0.001f);
+    CHECK(f.left.state.current().target == 90 && f.left.state.current().status == Status::Running);
+    return true;
+}
+bool result_retention_lifecycle() {
+    Fixture f;
+    std::array<OperationState::ResultLease, OperationState::retention_capacity> held;
+    for (size_t i = 0; i < held.size(); ++i) {
+        held[i] = f.left.state.retain(uint32_t(100 + i));
+        CHECK(bool(held[i]));
+    }
+    f.dispatch.deliver(4, Message::make(Pair, 1, PairGoal{180, -180}));
+    f.advance(20);
+    CHECK(f.activity.state.find(1).status == Status::Rejected);
+    CHECK(f.left.state.current().status == Status::Unknown && f.right.state.current().status == Status::Unknown);
+    for (auto& lease : held) lease.reset();
+    // Repeated replacement must free the old wait before reserving a new one.
+    for (uint32_t id = 2; id < 10; ++id) {
+        f.dispatch.deliver(4, Message::make(Pair, id, PairGoal{180, -180}));
+        f.advance(20);
+        CHECK(f.activity.state.find(id).status == Status::Running);
+    }
+    f.dispatch.deliver(7, Message::make(Cut, 10, Empty{}));
+    f.advance(30);
+    CHECK(f.activity.state.find(9).status == Status::Halted);
+    const auto all_slots_available = [&held](OperationState& state) {
+        for (size_t i = 0; i < held.size(); ++i) {
+            held[i] = state.retain(uint32_t(200 + i));
+            if (!held[i]) return false;
+        }
+        for (auto& lease : held) lease.reset();
+        return true;
+    };
+    CHECK(all_slots_available(f.left.state) && all_slots_available(f.right.state));
+    for (uint32_t id = 300; id < 300 + Inbox::capacity; ++id) f.move(1, id, 0);
+    f.dispatch.deliver(4, Message::make(Pair, 400, PairGoal{0, 0}));
+    f.ae.step(f.now + 10); // Left rejects admission; right accepts its child.
+    CHECK(f.activity.state.find(400).status == Status::Rejected);
+    CHECK(all_slots_available(f.left.state) && all_slots_available(f.right.state));
+    return true;
+}
 bool cut_during_pair_dispatch() {
     for (bool newer_external_goal : {false, true}) {
         Fixture f;
@@ -244,6 +332,10 @@ bool run_self_tests(TestLog log) {
         {"executor_owned_failure", executor_owned_failure},
         {"activity_polls_children", activity_polls_children},
         {"partial_delivery", partial_delivery},
+        {"pair_remembers_observed_result", pair_remembers_observed_result},
+        {"pair_retains_unobserved_result", pair_retains_unobserved_result},
+        {"retarget_between_ticks", retarget_between_ticks},
+        {"result_retention_lifecycle", result_retention_lifecycle},
         {"cut_during_pair_dispatch", cut_during_pair_dispatch},
         {"framing_and_validation", framing_and_validation},
         {"history_and_duplicate", history_and_duplicate},

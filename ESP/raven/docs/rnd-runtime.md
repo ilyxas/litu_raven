@@ -16,7 +16,7 @@ flowchart LR
   Activity -->|child goals| Dispatcher
   Left --> State[Operation snapshots]
   Right --> State
-  Activity -->|poll children| State
+  Activity -->|retain / poll children| State
   State --> Telemetry[Independent outbound telemetry]
   Protocol -->|status query| State
 ```
@@ -44,6 +44,9 @@ at 90 degrees/s and gives each motion distance/speed plus 500 ms to finish.
 Only ArmService knows that budget. A stalled or silent driver becomes TimedOut.
 Callback-mode completion is correlated by an internal generation; a stale callback
 cannot complete a replacement goal. A dropped callback can produce TimedOut.
+Before retargeting or stopping, the owner samples motion up to the command's
+timestamp. Target updates between ticks therefore preserve the simulator's
+90-degree/s rate; any old completion emitted by that sample keeps its old generation.
 Inbox posting and driver callbacks here run in task context; an ISR-backed driver
 must first bridge its interrupt into task context using the platform's ISR API.
 
@@ -54,7 +57,15 @@ New goals after the cut can run. Critical commands are not universal safety logi
 each subscriber implements its own semantics.
 
 Pair creates two child Move operations and polls their statuses. It has no child
-timeout. One failure marks the parent Failed while the independent sibling can
+timeout. Before dispatch it reserves a result handle from each service's state.
+Each state has four fixed retention slots independent of the public history;
+the handle holds the result until the scenario first reads its terminal outcome.
+Activity then remembers that outcome and releases the slot. Cancellation,
+replacement, admission failure and destruction also release handles. If both
+handles cannot be reserved, Pair becomes Rejected before dispatching children.
+This prevents history churn, including churn before the first poll, from stranding
+an active scenario. OperationState must outlive its result handles.
+One failure marks the parent Failed while the independent sibling can
 finish. Partial child admission marks the parent Rejected without rolling back
 the delivered child. Requests for all-or-nothing multi-resource ownership are
 outside this prototype. Internal child operation IDs start at `0x80000000`.
@@ -64,7 +75,19 @@ to this single Activity and does not cancel newer external goals or future pairs
 
 ## Wire contract
 
-One command connection is accepted at a time. Replies use that connection.
+One command connection is active at a time. A newly accepted connection replaces
+the previous one, even when the previous socket remains open. The listener stays
+in the command task's select loop; it does not wait for FIN/RST or a receive error.
+Replacement resets the connection's parser and does not cancel accepted operations.
+`RAVEN_RND_RUNTIME` selects `LWIP_SO_LINGER`; replacing a socket closes it with
+zero linger, without waiting for acknowledgements of its pending outbound data.
+The loop handles at most one frame before checking the listener again, with a
+100-ms select interval, bounded sends and a yield after eight busy turns. The
+regression's recovery budget is two seconds from connecting the replacement to
+receiving its status response; it also verifies delivery of Cut on that socket.
+TCP keepalive (3-second idle, 1-second interval, 3 probes) additionally cleans up
+dead sockets when no replacement arrives; reconnection does not depend on probes.
+Replies use the active command connection.
 Telemetry continues to use a separate outbound connection, matching the existing
 iOS workbench topology. The unchanged header is little-endian `u16 message_id`,
 `u32 payload_length`, then payload. Command payloads are bounded to 128 bytes;
@@ -125,6 +148,7 @@ UI is changed; an actual iOS build/run remains a separate task.
 Use ESP-IDF 6.1.1 with target esp32s3:
 
 ```sh
+idf.py reconfigure
 idf.py build
 idf.py -p COM3 flash
 python tests/run_board_tests.py --port COM3
@@ -135,7 +159,8 @@ tests at boot. Look for individual `TEST ... PASS` lines and `RND_SELF_TEST PASS
 The Python runner resets the development board and then watches for runtime
 faults. Disable the boot-test option for manual sessions so its loopback client
 does not contend with the external command connection.
-The suite currently reports 15 cases, including concurrent pair cancellation;
+The suite currently reports 20 cases, including retained child results, retargets
+between ticks, concurrent pair cancellation and command-session replacement;
 the final log also reports each worker's minimum free stack in bytes.
 
 Without a station SSID, the board starts development AP `Raven-RND`, password
@@ -156,3 +181,6 @@ The same deterministic suite runs on the MCU and host. The host CMake also build
 the original MSP tests on platforms providing POSIX ssize_t. Board loopback tests
 exercise actual FreeRTOS scheduling and lwIP; they do not prove an iPhone session
 or over-the-air Wi-Fi throughput. Measure those separately when iOS work resumes.
+The replacement regression leaves the original socket open (no FIN/RST), including
+partial-header and partial-payload cases. It tests session takeover on real lwIP;
+it does not simulate radio loss or independently measure keepalive probe expiry.

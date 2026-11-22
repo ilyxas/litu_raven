@@ -2,6 +2,7 @@ menu "Raven RND prototype"
 config RAVEN_RND_RUNTIME
     bool "Run the virtual two-arm architecture prototype"
     default y
+    select LWIP_SO_LINGER
     help
         Runs mock actuators, independent owner tasks, TCP delivery receipts,
         operation status polling and telemetry. Does not drive actuator GPIOs.

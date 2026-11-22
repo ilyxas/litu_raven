@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <utility>
 
 namespace raven::rnd {
 Snapshot OperationState::current() const {
@@ -11,12 +12,54 @@ Snapshot OperationState::current() const {
 }
 Snapshot OperationState::find(uint32_t id) const {
     std::lock_guard<std::mutex> lock(mutex_);
+    return find_locked(id);
+}
+Snapshot OperationState::find_locked(uint32_t id) const {
     if (!id || current_.operation == id) return current_;
     for (const auto& entry : history_) if (entry.operation == id) return entry;
     return {id, Status::Unknown, 0, 0, false, 0};
 }
+OperationState::ResultLease OperationState::retain(uint32_t id) {
+    if (!id) return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    Snapshot value = find_locked(id);
+    for (const auto& entry : retained_)
+        if (entry.used && entry.value.operation == id) { value = entry.value; break; }
+    for (size_t i = 0; i < retained_.size(); ++i) {
+        if (!retained_[i].used) {
+            retained_[i] = {true, value};
+            return ResultLease(*this, i);
+        }
+    }
+    return {};
+}
+OperationState::ResultLease::~ResultLease() { reset(); }
+OperationState::ResultLease::ResultLease(ResultLease&& other) noexcept
+    : owner_(std::exchange(other.owner_, nullptr)), slot_(other.slot_) {}
+OperationState::ResultLease& OperationState::ResultLease::operator=(ResultLease&& other) noexcept {
+    if (this != &other) {
+        reset();
+        owner_ = std::exchange(other.owner_, nullptr);
+        slot_ = other.slot_;
+    }
+    return *this;
+}
+Snapshot OperationState::ResultLease::snapshot() const {
+    if (!owner_) return {};
+    std::lock_guard<std::mutex> lock(owner_->mutex_);
+    return owner_->retained_[slot_].value;
+}
+void OperationState::ResultLease::reset() {
+    if (!owner_) return;
+    std::lock_guard<std::mutex> lock(owner_->mutex_);
+    owner_->retained_[slot_].used = false;
+    owner_ = nullptr;
+}
 void OperationState::publish(const Snapshot& value) {
     std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& entry : retained_)
+        if (entry.used && entry.value.operation == value.operation && !terminal(entry.value.status))
+            entry.value = value;
     // Keep rejected/queued-after-cut operations from hiding a still running one.
     if (terminal(value.status)) {
         bool found = false;
@@ -72,6 +115,7 @@ void ArmService::callback(void* context, const Completion& completion) {
 }
 void ArmService::finish(Status status, uint64_t now) {
     if (active_.status != Status::Running) return;
+    sample_motion(now);
     driver_.stop();
     moving_ = false;
     active_.status = status;
@@ -84,6 +128,9 @@ void ArmService::reject(uint32_t id, float target, Status status, uint64_t now) 
     state.publish({id, status, active_.position, target, false, now});
 }
 void ArmService::retarget(float target, uint64_t now) {
+    // Account for the old trajectory before replacing its clock/generation.
+    // A completion emitted here remains correlated with the old generation.
+    sample_motion(now);
     active_.target = target;
     active_.changed_ms = now;
     // Device-specific motion budget: simulated 90 degrees/s + 500 ms margin.
@@ -105,8 +152,8 @@ void ArmService::start(uint32_t id, float target, bool continuous, uint64_t now)
 void ArmService::on_message(const Message& message, uint64_t now) {
     if (message.id == Cut) {
         cutoff_ = message.sequence;
-        driver_.stop();
-        finish(Status::Halted, now);
+        if (active_.status == Status::Running) finish(Status::Halted, now);
+        else driver_.stop();
         return;
     }
     if (message.id == CancelChildren) {
@@ -153,11 +200,15 @@ void ArmService::on_message(const Message& message, uint64_t now) {
         }
     }
 }
-void ArmService::on_tick(uint64_t now) {
-    if (active_.status != Status::Running) return;
+DriverStatus ArmService::sample_motion(uint64_t now) {
     driver_.advance(now);
     const auto status = driver_.read();
     if (status.ready) active_.position = status.position;
+    return status;
+}
+void ArmService::on_tick(uint64_t now) {
+    if (active_.status != Status::Running) return;
+    const auto status = sample_motion(now);
     if (status.fault) { finish(Status::Failed, now); return; }
     if (status.ready && status.reached) {
         moving_ = false;
@@ -167,12 +218,16 @@ void ArmService::on_tick(uint64_t now) {
     state.publish(active_);
 }
 
-DualArmActivity::DualArmActivity(Dispatcher& dispatcher, const OperationState& left, const OperationState& right)
+DualArmActivity::DualArmActivity(Dispatcher& dispatcher, OperationState& left, OperationState& right)
     : dispatcher_(dispatcher), left_(left), right_(right) {
     const bool configured = inbox.subscribe(Pair, sizeof(PairGoal), Policy::Ordered) &&
                             inbox.subscribe(Cut, sizeof(Empty), Policy::Critical);
     assert(configured);
     (void)configured;
+}
+void DualArmActivity::release_children() {
+    left_result_.reset();
+    right_result_.reset();
 }
 void DualArmActivity::on_message(const Message& message, uint64_t now) {
     if (message.id == Cut) {
@@ -182,6 +237,7 @@ void DualArmActivity::on_message(const Message& message, uint64_t now) {
         // previously allocated range as well, without touching newer external
         // commands. Monotonically increasing cancellation ranges can coalesce.
         dispatcher_.deliver(3, Message::make(CancelChildren, 0, ChildCancellation{next_id_ - 1}));
+        release_children();
         if (active_.status == Status::Running) {
             active_.status = Status::Halted;
             active_.changed_ms = now;
@@ -202,29 +258,47 @@ void DualArmActivity::on_message(const Message& message, uint64_t now) {
     }
     left_id_ = next_id_++;
     right_id_ = next_id_++;
+    release_children();
+    left_outcome_ = right_outcome_ = Status::Unknown;
+    left_result_ = left_.retain(left_id_);
+    right_result_ = right_.retain(right_id_);
+    active_ = {message.request, Status::Running, 0, 0, false, now};
+    if (!left_result_ || !right_result_) {
+        active_.status = Status::Rejected;
+        release_children();
+        state.publish(active_);
+        return;
+    }
     const auto left = dispatcher_.deliver(1, Message::make(Move, left_id_, Goal{goal.left}));
     const auto right = dispatcher_.deliver(2, Message::make(Move, right_id_, Goal{goal.right}));
-    active_ = {message.request, Status::Running, 0, 0, false, now};
     if (!left.complete() || !right.complete()) {
         // Fanout is explicitly non-transactional. Accepted children still run;
         // orchestration does not issue a broad cut against unrelated work.
         active_.status = Status::Rejected;
+        release_children();
     }
     state.publish(active_);
 }
 void DualArmActivity::on_tick(uint64_t now) {
     if (active_.status != Status::Running) return;
-    const auto left = left_.find(left_id_);
-    const auto right = right_.find(right_id_);
-    if ((terminal(left.status) && left.status != Status::Succeeded) ||
-        (terminal(right.status) && right.status != Status::Succeeded)) {
+    if (!terminal(left_outcome_)) {
+        left_outcome_ = left_result_.snapshot().status;
+        if (terminal(left_outcome_)) left_result_.reset();
+    }
+    if (!terminal(right_outcome_)) {
+        right_outcome_ = right_result_.snapshot().status;
+        if (terminal(right_outcome_)) right_result_.reset();
+    }
+    if ((terminal(left_outcome_) && left_outcome_ != Status::Succeeded) ||
+        (terminal(right_outcome_) && right_outcome_ != Status::Succeeded)) {
         active_.status = Status::Failed;
         // Independent sibling execution continues; only an explicit critical
         // command cuts it. In particular, don't cancel another caller's goal.
-    } else if (left.status == Status::Succeeded && right.status == Status::Succeeded) {
+    } else if (left_outcome_ == Status::Succeeded && right_outcome_ == Status::Succeeded) {
         active_.status = Status::Succeeded;
     } else return;
     active_.changed_ms = now;
+    release_children();
     state.publish(active_);
 }
 } // namespace raven::rnd

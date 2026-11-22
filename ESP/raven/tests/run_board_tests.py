@@ -47,7 +47,7 @@ def main():
                 passed = True
                 deadline = time.monotonic() + args.soak
     print(f"Board tests: {len(tests)} passed; completed={passed}; runtime_fault={failed}")
-    return 0 if passed and not failed and len(tests) >= 15 else 1
+    return 0 if passed and not failed and len(tests) >= 20 else 1
 
 
 if __name__ == "__main__":

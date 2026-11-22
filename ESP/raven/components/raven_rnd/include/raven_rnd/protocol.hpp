@@ -36,6 +36,10 @@ public:
     using Emit = bool (*)(void*, const Response&);
     explicit FrameReader(Protocol& protocol) : protocol_(protocol) {}
     bool feed(const uint8_t* data, size_t size, Emit emit, void* context);
+    // Limit a socket read to one header/payload phase, allowing the listener to
+    // be serviced between frames even when the current client floods requests.
+    size_t bytes_needed() const { return expected_ - used_; }
+    void reset() { used_ = 0; expected_ = 6; }
 private:
     Protocol& protocol_;
     std::array<uint8_t, 6 + wire::max_payload> bytes_{};

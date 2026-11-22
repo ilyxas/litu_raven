@@ -17,6 +17,10 @@
 #include "nvs_flash.h"
 #include "sdkconfig.h"
 
+#if defined(CONFIG_RAVEN_RND_RUNTIME) && !defined(CONFIG_LWIP_SO_LINGER)
+#error "Raven RND requires SO_LINGER; regenerate SDK configuration with idf.py reconfigure"
+#endif
+
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -144,27 +148,57 @@ int connect_to(const char* host, uint16_t port) {
     timeouts(fd, 200);
     return fd;
 }
+bool command_options(int fd) {
+    timeouts(fd, 200);
+    const int enabled = 1, idle = 3, interval = 1, probes = 3;
+    // Abortive close prevents replacement from waiting for an unreachable peer
+    // to acknowledge old outbound data. Accepted operations remain in services.
+    const linger discard_pending{1, 0};
+    return setsockopt(fd, SOL_SOCKET, SO_LINGER, &discard_pending, sizeof(discard_pending)) == 0 &&
+        setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &enabled, sizeof(enabled)) == 0 &&
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle)) == 0 &&
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval)) == 0 &&
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &probes, sizeof(probes)) == 0;
+}
 void command_task(void*) {
     const int server = listen_at(CONFIG_RAVEN_RND_PORT);
     if (server < 0) { ESP_LOGE(TAG, "command listener failed"); vTaskDelete(nullptr); return; }
     runtime.server_ready = true;
     ESP_LOGI(TAG, "RND_NETWORK_READY port=%d", CONFIG_RAVEN_RND_PORT);
+    int client = -1;
+    FrameReader reader(runtime.protocol);
+    unsigned batch = 0;
     for (;;) {
-        int client = accept(server, nullptr, nullptr);
-        if (client < 0) { vTaskDelay(pdMS_TO_TICKS(100)); continue; }
-        timeouts(client, 200);
-        FrameReader reader(runtime.protocol);
-        uint8_t bytes[256];
-        for (;;) {
-            const int count = recv(client, bytes, sizeof(bytes), 0);
-            if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
-            if (count <= 0) break;
-            if (!reader.feed(bytes, static_cast<size_t>(count), [](void* context, const Response& reply) {
-                return send_frame(*static_cast<int*>(context), reply.id, reply.payload.data(), reply.size);
-            }, &client)) break;
-            vTaskDelay(1); // Bound ingress CPU use under a continuously readable socket.
+        fd_set reads; FD_ZERO(&reads); FD_SET(server, &reads);
+        if (client >= 0) FD_SET(client, &reads);
+        timeval wait{0, 100000};
+        const int ready = select((client > server ? client : server) + 1, &reads, nullptr, nullptr, &wait);
+        if (ready < 0) { vTaskDelay(1); continue; }
+        if (ready == 0) { batch = 0; continue; }
+        // Newest controller wins. An abandoned socket never monopolizes accept.
+        if (FD_ISSET(server, &reads)) {
+            const int replacement = accept(server, nullptr, nullptr);
+            if (replacement >= 0) {
+                if (command_options(replacement)) {
+                    if (client >= 0) close(client); // SO_LINGER=0; no blocking graceful shutdown.
+                    client = replacement;
+                    reader.reset();
+                } else {
+                    ESP_LOGE(TAG, "command socket configuration failed: %d", errno);
+                    close(replacement);
+                }
+            }
+        } else if (client >= 0 && FD_ISSET(client, &reads)) {
+            uint8_t bytes[wire::max_payload];
+            const int count = recv(client, bytes, reader.bytes_needed(), 0);
+            const bool retry = count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
+            const bool received = count > 0 && reader.feed(bytes, static_cast<size_t>(count),
+                [](void* context, const Response& reply) {
+                    return send_frame(*static_cast<int*>(context), reply.id, reply.payload.data(), reply.size);
+                }, &client);
+            if (!retry && !received) { close(client); client = -1; reader.reset(); }
         }
-        close_socket(client);
+        if (++batch == 8) { vTaskDelay(1); batch = 0; }
     }
 }
 void sensor_task(void*) {
@@ -266,11 +300,49 @@ bool network_self_test() {
     close_socket(client);
     return ok;
 }
+bool command_reconnect_test() {
+    // Keep the old socket open: no FIN/RST, no application activity. Test idle,
+    // incomplete header and incomplete payload sessions without a radio fault.
+    const uint8_t unfinished[]{0x01, 0x11, 9, 0, 0, 0, 1, 0};
+    for (const size_t prefix : {size_t(0), size_t(3), sizeof(unfinished)}) {
+        const uint32_t id = 21000 + uint32_t(prefix) * 10;
+        const int abandoned = connect_to("127.0.0.1", CONFIG_RAVEN_RND_PORT);
+        if (abandoned < 0) return false;
+        Response reply;
+        uint8_t control[9]{}; wire::put32(control, id);
+        float angle = 45; std::memcpy(control + 5, &angle, 4);
+        bool ok = transact(abandoned, wire::control, control, sizeof(control), reply) && reply.id == wire::ack;
+        // ACK precedes execution. Establish Running before checking that the
+        // transport takeover leaves this already accepted operation intact.
+        const uint64_t execution_deadline = now_ms() + 1000;
+        while (runtime.left.state.find(id).status == Status::Unknown && now_ms() < execution_deadline)
+            vTaskDelay(pdMS_TO_TICKS(10));
+        ok = runtime.left.state.find(id).status == Status::Running && ok;
+        if (prefix) ok = send_all(abandoned, unfinished, prefix) && ok;
+        const uint64_t started = now_ms();
+        const int replacement = connect_to("127.0.0.1", CONFIG_RAVEN_RND_PORT);
+        if (replacement >= 0) timeouts(replacement, 2000);
+        uint8_t query[9]{}; wire::put32(query, id + 1); wire::put32(query + 5, id);
+        ok = replacement >= 0 && transact(replacement, wire::status, query, sizeof(query), reply) &&
+             reply.id == wire::snapshot && reply.payload[9] == uint8_t(Status::Running) && ok;
+        const uint64_t recovery = now_ms() - started;
+        ok = ok && recovery < 2000;
+        uint8_t cut[5]{}; wire::put32(cut, id + 2); cut[4] = 1;
+        ok = replacement >= 0 && transact(replacement, wire::cut, cut, sizeof(cut), reply) && reply.id == wire::ack && ok;
+        ESP_LOGI(TAG, "TCP replacement prefix=%u recovery_ms=%lu ok=%d", unsigned(prefix),
+                 static_cast<unsigned long>(recovery), ok);
+        close_socket(replacement); close_socket(abandoned);
+        if (!ok) return false;
+    }
+    return true;
+}
 void test_task(void*) {
     const bool pure = run_self_tests([](const char* name, bool ok) { ESP_LOGI(TAG, "TEST %s %s", name, ok ? "PASS" : "FAIL"); });
     const uint64_t deadline = now_ms() + 5000;
     while (!runtime.server_ready && now_ms() < deadline) vTaskDelay(pdMS_TO_TICKS(10));
     const bool network = runtime.server_ready && network_self_test();
+    const bool reconnect = runtime.server_ready && command_reconnect_test();
+    ESP_LOGI(TAG, "TEST tcp_session_replacement %s", reconnect ? "PASS" : "FAIL");
     ESP_LOGI(TAG, "stack minimum free bytes: left=%u right=%u activity=%u sensors=%u commands=%u telemetry=%u selftest=%u",
              runtime.left_task.stack_free(), runtime.right_task.stack_free(), runtime.activity_task.stack_free(),
              unsigned(uxTaskGetStackHighWaterMark(runtime.sensor_handle)),
@@ -278,7 +350,7 @@ void test_task(void*) {
              unsigned(uxTaskGetStackHighWaterMark(runtime.telemetry_handle)),
              unsigned(uxTaskGetStackHighWaterMark(nullptr)));
     ESP_LOGI(TAG, "TEST tcp_and_slow_telemetry %s", network ? "PASS" : "FAIL");
-    ESP_LOGI(TAG, "RND_SELF_TEST %s heap=%u", pure && network ? "PASS" : "FAIL", unsigned(esp_get_free_heap_size()));
+    ESP_LOGI(TAG, "RND_SELF_TEST %s heap=%u", pure && network && reconnect ? "PASS" : "FAIL", unsigned(esp_get_free_heap_size()));
     vTaskDelete(nullptr);
 }
 #endif
