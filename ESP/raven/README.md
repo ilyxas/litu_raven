@@ -3,12 +3,22 @@
 The default boot mode is now the **two-arm virtual execution prototype**:
 synchronous delivery ACK/NACK, owner-managed operation status, replaceable goals,
 reserved critical-message slots, polling/callback drivers and independent TCP
-telemetry. iOS is unchanged. The connected ESP32-S3 can run the deterministic and
+telemetry and Bluetooth Serial Connect controls. iOS is unchanged. The connected ESP32-S3 can run the deterministic and
 TCP loopback test suite at boot.
 
 See [RND runtime and protocol](docs/rnd-runtime.md) for configuration, wire formats,
 task ownership and test commands, and [ADR-001](docs/adr/0001-delivery-and-execution.md)
 for the delivery/execution boundary and trade-offs.
+
+## Connect from the phone
+
+See [Bluetooth Serial Connect setup](docs/ble-console.md): connect to **Raven-BLE**,
+open Console, send `help`, then `move left 45` and `status left`. Boards can bind
+buttons, sliders, joysticks and readouts to the documented channel map.
+
+Fresh builds use `sdkconfig.defaults` (NimBLE, native USB console, 2 MiB partition
+layout). Boot tests are opt-in. Existing sdkconfig files keep their values: follow
+the configuration section in the BLE guide when upgrading a previous checkout.
 
 ## Previous flight-controller boot mode
 
@@ -39,9 +49,10 @@ available.
 
 ## Preserved architecture
 
-- `raven_core`: task, queue, payload ownership, and monitoring substrate.
-- `raven_activities`: the Activity role and `BaseActivity`; concrete product
-  activities will be added only when real orchestration exists.
+- `raven_core`: inbox, dispatcher, deterministic executor, legacy tasks and monitoring.
+- `raven_contracts`: shared demo commands and driver interface.
+- `raven_activities`: the Activity role and `BaseActivity`; the two-arm
+  example is implemented by `DualArmActivity`.
 - `raven_services`: the Service role and product subsystem workers.
 - `raven_state`: task-safe canonical state stores.
 - `raven_events`: broadcast facts and thin event callbacks.

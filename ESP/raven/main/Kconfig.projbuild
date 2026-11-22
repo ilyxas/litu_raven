@@ -1,4 +1,4 @@
-menu "Raven RND prototype"
+menu "Raven architecture demo"
 config RAVEN_RND_RUNTIME
     bool "Run the virtual two-arm architecture prototype"
     default y
@@ -8,8 +8,15 @@ config RAVEN_RND_RUNTIME
         operation status polling and telemetry. Does not drive actuator GPIOs.
 config RAVEN_RND_SELF_TEST
     bool "Run deterministic and TCP loopback tests at boot"
-    default y
+    default n
     depends on RAVEN_RND_RUNTIME
+config RAVEN_BLE_ENABLED
+    bool "Bluetooth Serial Connect server (FFE0/FFE1)"
+    default y
+    depends on RAVEN_RND_RUNTIME && BT_NIMBLE_ENABLED
+    help
+        Advertises Raven-BLE and exposes a newline ASCII console and demo controls.
+        Uses simulated arms. Subscribe to FFE1 notifications before writing.
 config RAVEN_RND_PORT
     int "Incoming TCP command port"
     range 1024 65535
