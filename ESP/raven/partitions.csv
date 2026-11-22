@@ -1,0 +1,5 @@
+# Name, Type, SubType, Offset, Size, Flags
+nvs, data, nvs, 0x9000, 0x6000,
+phy_init, data, phy, 0xf000, 0x1000,
+# Fits even a 2 MiB configuration; BLE + Wi-Fi exceed the previous 1 MiB app slot.
+factory, app, factory, 0x10000, 0x1f0000,

@@ -5,12 +5,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 enable_testing()
 find_package(Threads REQUIRED)
 set(COMPONENTS "${CMAKE_CURRENT_LIST_DIR}/../../components")
-add_executable(runtime_test runtime_test.cpp
-    ${COMPONENTS}/raven_runtime/src/runtime.cpp
-    ${COMPONENTS}/raven_rnd/src/arm.cpp
-    ${COMPONENTS}/raven_rnd/src/protocol.cpp
-    ${COMPONENTS}/raven_rnd/src/self_test.cpp)
-target_include_directories(runtime_test PRIVATE ${COMPONENTS}/raven_runtime/include ${COMPONENTS}/raven_rnd/include)
+add_executable(runtime_test runtime_test.cpp ../runtime_self_test.cpp
+    ${COMPONENTS}/raven_core/src/inbox.cpp
+    ${COMPONENTS}/raven_core/src/dispatcher.cpp
+    ${COMPONENTS}/raven_core/src/executor.cpp
+    ${COMPONENTS}/raven_state/src/operation_state.cpp
+    ${COMPONENTS}/raven_platform/src/sim_arm_driver.cpp
+    ${COMPONENTS}/raven_services/src/arm_service.cpp
+    ${COMPONENTS}/raven_activities/src/dual_arm_activity.cpp
+    ${COMPONENTS}/raven_gateways/src/command_protocol.cpp
+    ${COMPONENTS}/raven_gateways/src/frame_reader.cpp
+    ${COMPONENTS}/raven_gateways/src/serial_control_protocol.cpp)
+target_include_directories(runtime_test PRIVATE ..)
+foreach(component raven_core raven_contracts raven_state raven_platform raven_services raven_activities raven_gateways)
+    target_include_directories(runtime_test PRIVATE ${COMPONENTS}/${component}/include)
+endforeach()
 target_link_libraries(runtime_test PRIVATE Threads::Threads)
 if(MSVC)
     target_compile_options(runtime_test PRIVATE /W4 /WX)

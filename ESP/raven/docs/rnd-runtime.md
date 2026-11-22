@@ -1,4 +1,4 @@
-# Raven RND execution prototype
+# Raven execution runtime and two-arm demo
 
 This branch runs two virtual arm services on ESP32-S3. No actuator GPIO/UART is
 driven. iOS source is unchanged. The default firmware starts the prototype;
@@ -6,7 +6,11 @@ disable `RAVEN_RND_RUNTIME` to boot the previous optional FC integration.
 
 ```mermaid
 flowchart LR
-  TCP[TCP command session] --> Protocol[Protocol validation]
+  TCP[TCP command session] --> Protocol[Binary Protocol]
+  BLE[BLE FFE0 / FFE1] --> Text[SerialControlProtocol]
+  Text --> Dispatcher
+  State --> UI[BLE readouts]
+  UI --> BLE
   Protocol --> Dispatcher
   Dispatcher -->|delivery receipt| Protocol
   Protocol -->|ACK / NACK| TCP
@@ -23,20 +27,35 @@ flowchart LR
 
 ## Owners and execution
 
-`raven_runtime` contains the fixed-storage inbox, dispatcher and deterministic
-executor. `raven_rnd` provides `ArmService`, `DualArmActivity`, simulated drivers,
-thread-safe operation state and the boundary codec. `raven_rnd_esp` composes them
-with FreeRTOS, Wi-Fi and sockets; app_main selects the boot mode. These roles are independent of TCP
-and are intentionally not expressed as one RTOS task per operation.
+The prototype-only `raven_runtime`, `raven_rnd` and `raven_rnd_esp` components have
+been removed. Classes now live in the existing architectural roles; the demo's
+portable types use `raven::demo`, and the reusable executor uses `raven::runtime`.
+
+| Component | Responsibility and entry points |
+|---|---|
+| `raven_core` | `message.hpp`, `inbox.hpp`, `dispatcher.hpp`, `component.hpp`, `executor.hpp`: copied delivery and owner execution |
+| `raven_contracts` | `arm_commands.hpp`, `arm_driver.hpp`: shared demo messages and device API, no implementation dependency |
+| `raven_state` | `operation_state.hpp` with `ResultLease`, `sensor_state.hpp`: consistent snapshots and bounded result retention |
+| `raven_services` | `arm_service.hpp`, `sim_sensor_service.hpp`: actuator outcome/deadlines and simulated acquisition |
+| `raven_activities` | `dual_arm_activity.hpp`: child goals and retained status polling |
+| `raven_platform` | `owner_task.hpp`, `sim_arm_driver.hpp`, `ble_serial_server.hpp`, `tcp_io.hpp`, `wifi_network.hpp`: execution and I/O backends |
+| `raven_gateways` | Binary `Protocol`/`FrameReader`/`CommandServer`, `TelemetryPublisher`; text `SerialControlProtocol`/`BleControlGateway` |
+| `main` | `demo_runtime.hpp` owns the object graph; `demo_bootstrap.cpp` binds routes and starts tasks |
+| `tests` | Portable behavior tests and separate ESP/lwIP board tests |
+
+Public class comments describe ownership, lifetime and usage. `OperationState`'s
+position/target fields remain demo-specific. The older FC `BaseTask` and network
+codec APIs are preserved; unifying those gateways is a separate integration step.
+The `RAVEN_RND_*` Kconfig names remain to preserve existing local configurations.
 
 Each arm has a 4096-byte stack and priority 5; Activity has 4096 bytes at priority
-4. Mock sensors use 3072 bytes at priority 3, command ingress 6144 bytes at priority
+4. Mock sensors use a 4096-byte OwnerTask at priority 3, command ingress 6144 bytes at priority
 3, telemetry 6144 bytes at priority 2, and the system monitor 4096 bytes at priority
 1. Boot tests temporarily use a separate 32768-byte stack. Task creation is dynamic
 at bootstrap; message storage and execution state are fixed-capacity thereafter.
 The legacy/newlib/Wi-Fi/socket implementations may allocate their own memory.
 
-Owner ticks are scheduled every 10 ms (the supplied SDK config uses 100 Hz).
+Arm and Activity ticks are scheduled every 10 ms; sensor ticks every 50 ms (the supplied SDK config uses 100 Hz).
 After eight consecutive queued turns the task yields for one RTOS tick. This
 prevents sustained ingress from monopolizing CPU. These are prototype scheduling
 choices, not a hardware emergency-stop latency guarantee. The simulator moves
@@ -150,23 +169,24 @@ Use ESP-IDF 6.1.1 with target esp32s3:
 ```sh
 idf.py reconfigure
 idf.py build
-idf.py -p COM3 flash
-python tests/run_board_tests.py --port COM3
+idf.py -p COM4 flash
+python tests/run_board_tests.py --port COM4
 ```
 
-`RAVEN_RND_SELF_TEST` runs deterministic tests and TCP/slow-telemetry loopback
-tests at boot. Look for individual `TEST ... PASS` lines and `RND_SELF_TEST PASS`.
+Boot self-tests default to off. Enable `RAVEN_RND_SELF_TEST` in menuconfig to run deterministic tests and TCP/slow-telemetry loopback
+tests at boot. BLE advertising starts after the test sequence. Look for individual `TEST ... PASS` lines and `RND_SELF_TEST PASS`.
 The Python runner resets the development board and then watches for runtime
 faults. Disable the boot-test option for manual sessions so its loopback client
 does not contend with the external command connection.
-The suite currently reports 20 cases, including retained child results, retargets
-between ticks, concurrent pair cancellation and command-session replacement;
+The suite currently reports 25 cases, including retained child results, retargets
+between ticks, concurrent pair cancellation, command-session replacement, ASCII
+fragmentation, validation, controller HALT, reconnect parsing and quiet readouts;
 the final log also reports each worker's minimum free stack in bytes.
 
 Without a station SSID, the board starts development AP `Raven-RND`, password
 `raven-rnd`, address `192.168.4.1:8080`. This is a local mock-device workbench,
 not an authenticated production control channel. Alternatively configure station
-SSID/password under `Raven RND prototype`; keep credentials in ignored sdkconfig.
+SSID/password under `Raven architecture demo`; keep credentials in ignored sdkconfig.
 Set the outbound telemetry IPv4/port there for the existing iOS server. An empty
 host disables external telemetry. The firmware never changes the computer's Wi-Fi.
 

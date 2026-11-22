@@ -2,11 +2,11 @@
   "project": {
     "name": "Raven",
     "target": "ESP32-S3",
-    "branch_intent": "RND: delivery receipts and owner execution with virtual arms; FC retained as alternate boot mode",
+    "branch_intent": "R&D: role-based components and BLE/TCP development controls; FC remains alternate boot",
     "principle": "Concrete product objects may change freely; Activities, Services, State, Events, Gateways, Platform adapters, and the owner-context execution model remain explicit architectural roles until real hardware proves that a boundary must change."
   },
   "runtime_flow": [
-    "TCP Protocol / FrameReader",
+    "TCP Protocol / FrameReader OR BLE SerialControlProtocol",
     "Dispatcher -> synchronous delivery ACK/NACK",
     "Reserved critical / ordered / latest-value Inbox",
     "Executor -> ArmService / DualArmActivity",
@@ -21,51 +21,89 @@
   ],
   "components": [
     {
-      "name": "raven_runtime",
-      "architectural": ["Message", "Inbox", "Dispatcher", "Component", "Executor"],
-      "note": "Fixed-storage transport-independent execution substrate"
-    },
-    {
-      "name": "raven_rnd",
-      "product": ["ArmService", "DualArmActivity", "SimArmDriver", "OperationState", "Protocol", "FrameReader"],
-      "note": "Portable prototype behavior and deterministic self-tests"
-    },
-    {
-      "name": "raven_rnd_esp",
-      "product": ["OwnerTask", "Wi-Fi/TCP adapters", "Sensors", "Telemetry", "TCP loopback tests"],
-      "note": "ESP backend; virtual actuators only; no iOS source changes"
-    },
-    {
       "name": "raven_core",
-      "architectural": ["BaseTask", "TaskMessage", "SystemMonitorTask"],
+      "architectural": [
+        "BaseTask",
+        "TaskMessage",
+        "SystemMonitorTask",
+        "Message",
+        "Inbox",
+        "Dispatcher",
+        "Component",
+        "Executor"
+      ],
       "product": []
     },
     {
+      "name": "raven_contracts",
+      "product": [
+        "arm_commands",
+        "IArmDriver"
+      ],
+      "note": "Shared demo contracts; no dependency on service implementations or ESP-IDF."
+    },
+    {
       "name": "raven_activities",
-      "architectural": ["BaseActivity"],
-      "product": [],
-      "note": "The role is preserved; no concrete product Activity exists yet."
+      "architectural": [
+        "BaseActivity"
+      ],
+      "product": [
+        "DualArmActivity"
+      ],
+      "note": "Two-arm example observes retained child outcomes, without child timeouts."
     },
     {
       "name": "raven_services",
-      "architectural": ["BaseService"],
-      "product": ["FlightControllerService"]
+      "architectural": [
+        "BaseService"
+      ],
+      "product": [
+        "FlightControllerService",
+        "ArmService",
+        "SimSensorService"
+      ]
     },
     {
       "name": "raven_state",
-      "architectural": ["Thread-safe canonical state"],
-      "product": ["FlightControllerState"]
+      "architectural": [
+        "Thread-safe canonical state"
+      ],
+      "product": [
+        "FlightControllerState",
+        "OperationState",
+        "ResultLease",
+        "SensorState"
+      ]
     },
     {
       "name": "raven_events",
-      "architectural": ["EventBus"],
-      "product": ["FLIGHT_CONTROLLER_EVENTS"]
+      "architectural": [
+        "EventBus"
+      ],
+      "product": [
+        "FLIGHT_CONTROLLER_EVENTS"
+      ]
     },
     {
       "name": "raven_platform",
-      "architectural": ["ILink", "IServer", "ISerialPort"],
-      "product": ["EspUartPort"],
-      "preserved": ["TcpClientLink", "TcpSessionLink", "TcpServer"]
+      "architectural": [
+        "ILink",
+        "IServer",
+        "ISerialPort",
+        "OwnerTask",
+        "BleSerialServer",
+        "tcp_io",
+        "wifi_network"
+      ],
+      "product": [
+        "EspUartPort",
+        "SimArmDriver"
+      ],
+      "preserved": [
+        "TcpClientLink",
+        "TcpSessionLink",
+        "TcpServer"
+      ]
     },
     {
       "name": "raven_gateways",
@@ -75,17 +113,37 @@
         "NetworkGateway",
         "NetworkClientGateway"
       ],
-      "product": ["MspV1Codec", "MspV1Parser", "MspClient", "BetaflightMspClient"]
+      "product": [
+        "MspV1Codec",
+        "MspV1Parser",
+        "MspClient",
+        "BetaflightMspClient",
+        "Protocol",
+        "FrameReader",
+        "CommandServer",
+        "TelemetryPublisher",
+        "SerialControlProtocol",
+        "BleControlGateway"
+      ]
     },
     {
       "name": "main",
-      "architectural": ["Explicit product composition root"],
-      "product": ["start_rnd_runtime (default)", "start_product_runtime (alternate)"]
+      "architectural": [
+        "Explicit product composition root"
+      ],
+      "product": [
+        "start_demo_runtime (default)",
+        "start_product_runtime (alternate)"
+      ]
     }
   ],
   "alternate_fc_milestone": {
     "mode": "read-only",
-    "requests": ["MSP_API_VERSION", "MSP_FC_VARIANT", "MSP_FC_VERSION"],
+    "requests": [
+      "MSP_API_VERSION",
+      "MSP_FC_VARIANT",
+      "MSP_FC_VERSION"
+    ],
     "write_commands_exposed": false,
     "hardware_link_enabled_by_default": false
   }
