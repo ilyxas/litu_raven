@@ -99,9 +99,9 @@ Wi-Fi static RX/dynamic RX/dynamic TX — по 6. PSRAM не используе�
 | Подключённый BLE-клиент | 6 144 | сверх startup radio pools; наблюдавшаяся разница около 4,7 KiB |
 | Итого динамический резерв | 80 896 | не прибавлять Runtime/stack второй раз к уже измеренному heap |
 
-Startup free internal DMA heap 110 692 bytes после радио и application owners, до test monitor.
+В итоговой production-прошивке startup free internal DMA heap 110 664 bytes после радио и application owners.
 После выхода из `app_main` освобождаются ещё 3584 bytes его стека (`CONFIG_ESP_MAIN_TASK_STACK_SIZE`);
-возвращаемый TCB в запас не засчитываем. Оценка production: 110 692 + 3584 − 80 896 = **33 380 bytes**.
+возвращаемый TCB в запас не засчитываем. Оценка production: 110 664 + 3584 − 80 896 = **33 352 bytes**.
 Это консервативный резерв для данного ICD/window/profile, а не гарантия произвольной нагрузки всей
 сети. Allocation overhead и фрагментация проверяются на железе по free/min, largest block и stack
 high-water marks. Тестовая monitor task дополнительно расходует 3072 bytes стека и TCB; её расход
@@ -144,9 +144,33 @@ MC закрывает только slow stream с `send-deadline`. SDK `wlanif.c
   Каждый вернулся с новым Boot ID, MC переиспользовал слоты с новым generation. Остановки делались
   удержанием приложения в ROM через esptool; физическое снятие питания CAM дополнительно выполнил пользователь.
 
-- [CI для 3c9d8fe](https://github.com/ilyxas/litu_raven/actions/runs/45735612546): все шесть jobs прошли —
+- [CI для 3290f57](https://github.com/ilyxas/litu_raven/actions/runs/45737377589): все шесть jobs прошли —
   Linux host, ASan/UBSan, TSan; firmware MC ESP32-S3, node ESP32 и node ESP32-S3.
 
-Итоговая выдержка четырёх плат фиксируется здесь после завершения прогона.
+Итоговая непрерывная запись четырёх плат — 1835 секунд; после исключения первых 20 секунд
+восстановления `check_capture.py --seconds 1800` прошёл на каждой плате (181–182 snapshots).
+Все связи оставались Ready, last_seen рос, Boot ID/slot/generation не менялись; reset/watchdog,
+таймаутов и новых diagnostic drops в этом интервале нет. На COM6 счётчик уже содержал одну потерю
+диагностики при старте и далее не рос. BLE был подключён с 127-й секунды до конца записи.
+
+| Плата | Minimum internal DMA heap | Minimum sampled largest block | Minimum owner/host stack |
+|---|---:|---:|---:|
+| COM4 / MC | 91 860 | 63 488 | 1 312 |
+| COM5 / node | 198 192 | 110 592 | 1 480 |
+| COM6 / node | 198 068 | 110 592 | 1 472 |
+| COM7 / CAM node | 197 156 | 110 592 | 1 544 |
+
+После выдержки выполнен полный повтор TCP suite с усиленной проверкой свежести keepalive и тем же
+BLE-соединением, без перезапуска MC: **6/6 PASS**. Slow reader закрыт с `send-deadline`, остальные пять
+сессий продолжили обмен; затем восстановлены все шесть. На этом прогретом MC с повторным использованием
+сессий минимум heap **82 632**, largest sampled block **59 392**, minimum stack **1 256** bytes.
+Reset/panic/watchdog MC и новых diagnostic drops нет. Здесь зафиксирован наименьший heap данного этапа.
+
+На всех четырёх платах оставлены обычные прошивки с `RAVEN_VALIDATION_MONITOR=n` и
+`RAVEN_TCP_BOARD_PROBE=n`: MC image 1 054 240 bytes, node image 826 640 bytes. Flash каждого устройства
+проверена esptool по хешу; CAM прошита ROM loader с `--no-stub`. Последующее 60-секундное наблюдение
+после reset MC подтвердило Ready всех трёх nodes и BLE_READY, отсутствие тестового вывода и новых
+ошибок после восстановления связей. Serial-порты освобождены.
+
 Старые отчёты «25/25 на Arm Demo» не являются проверкой этой реализации. Реального iOS-клиента и UART
 transport в текущем этапе нет; их работоспособность не заявляется.
