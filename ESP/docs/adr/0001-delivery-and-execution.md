@@ -4,7 +4,8 @@ Status: Implemented on `dev_rnd`'s prototype branch; not a migration of `main`.
 
 Historical prototype record. Its delivery/execution distinction remains in force;
 the arm demo and wire protocol below were removed by [ADR-003](0003-device-communication.md).
-See [current architecture](../architecture.md) for the implemented layout and contracts.
+See the [Raven architectural specification](../architecture.md) for normative roles and contracts,
+and [communication implementation](../communication-architecture.md) for the current layout.
 
 ## Context
 

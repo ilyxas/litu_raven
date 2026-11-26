@@ -46,7 +46,10 @@ cmake --build build/host
 ctest --test-dir build/host --output-on-failure
 ```
 
-- [Архитектура и lifecycle](docs/architecture.md).
+- [Архитектурная спецификация Raven](docs/architecture.md).
+- [Неизменяемый архитектурный baseline из 02dd622](docs/architecture-baseline-02dd622.md).
+- [Проверка полноты спецификации относительно baseline](docs/architecture-coverage.md).
+- [Коммуникационная реализация и lifecycle](docs/communication-architecture.md).
 - [ICD, framing и временная семантика](docs/communication.md).
 - [BLE-консоль](docs/ble-console.md).
 - [Ресурсы и воспроизводимые проверки](docs/validation.md).
