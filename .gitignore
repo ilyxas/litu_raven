@@ -79,6 +79,8 @@ sdkconfig.old
 
 # cache dir
 .cache/
+__pycache__/
+*.pyc
 
 # clang config (for LSP)
 .clangd
