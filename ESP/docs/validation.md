@@ -16,18 +16,34 @@ cmake -S ESP/tests/host -B build/asan -DRAVEN_SANITIZER=address -DCMAKE_BUILD_TY
 cmake -S ESP/tests/host -B build/tsan -DRAVEN_SANITIZER=thread -DCMAKE_BUILD_TYPE=Debug
 ```
 
-The `communication_test` CTest executable contains 17 scenarios: golden codec/invalid input; Critical admission,
+The `communication_test` CTest executable retains the original 17 scenarios: golden codec/invalid input; Critical admission,
 coalescing, and ticks under flood; fragmented/coalesced framing and absolute timeout;
 handshake/keepalive/probe; admission/Written/semantic deadline; response before Written; stale
 RX/TX after reuse; concurrent close versus commit; lost keepalive and ACK with full TX; bounded
 journal; parser/reconnect; send tickets, I/O leases, and 200 reuses; six peers/duplicate identity;
 at most one optional diagnostic; SDK Log V1/V2 fragments; transport-independent PacketWriter;
-full logs text.
+full logs text. Five additional regressions cover per-ticket failure reasons across
+session retirement, mandatory probe-result backpressure (completion/unknown peer/busy),
+RTT without a tick, RTT unavailable before Written, and the response deadline without
+a tick: 22 scenarios in this executable.
 
 The `service_contract_test` executable adds three scenarios: independent State snapshots
 across close/reuse, concurrent snapshot consistency, and DiagnosticsService using State
 and Dispatcher without a PeerService implementation dependency. The latter covers an
-unbound route, full admission, and a separately executed probe/result exchange.
+unbound route, full admission, and a separately executed probe/result exchange. It
+also checks mandatory console-output failure with the original generation and the
+visible difference between an unavailable RTT and a measured zero.
+
+`system_log_test` compiles the production log hook against a test SDK callback.
+It invokes the hook concurrently before the installer receives the previous callback,
+then verifies forwarding and captured warnings. A second scenario exercises the
+generation failure latch used by BLE, including delayed old failures.
+
+On Linux, `tcp_receive_test` compiles the production TCP channel and RX loop with
+thin SDK stubs and POSIX sockets. Two scenarios cover a real receive timeout,
+injected retryable/fatal errno values, EOF, partial-frame expiry, I/O lease release,
+peer retirement, and generation reuse. FreeRTOS scheduling and actual lwIP behavior
+are verified separately on hardware. Total: 27 scenarios on Windows, 29 on Linux.
 
 `RAVEN_TCP_BOARD_PROBE=y` in a **node test build** replaces the ordinary composition with a test client.
 `RAVEN_VALIDATION_MONITOR=y` adds UART snapshots every 10 seconds and an additional task with a
@@ -40,6 +56,9 @@ without takeover; unsupported version, invalid length, partial-frame deadline; a
 under load; and subsequent recovery of all six. Healthy-session checks require fresh keepalive
 (less than 3 seconds old), not merely an open fd and a previous handshake. The suite is repeated
 separately with a connected BLE console. After testing, restore `RAVEN_TCP_BOARD_PROBE=n` and ordinary node firmware.
+After changing/restoring test options, run `idf.py reconfigure build` and verify
+the generated `config/sdkconfig.h` before flashing. Restoring an older timestamped
+sdkconfig file alone may leave the previously generated test configuration in use.
 
 UART capture does not send application commands:
 
@@ -207,3 +226,51 @@ DiagnosticsService's dependency on PeerService. See
 No board was reflashed for this correction. Earlier hardware soak, BLE, heap, and
 stack results above remain evidence for the preceding firmware, not a fresh hardware
 run of these changes. Whole-PR architectural compliance is a separate review.
+
+## Independent review correction verification
+
+Implementation commit: `0a10075`, following the independently reviewed `0b0eb63`.
+Findings 1–5 are corrected; findings 6–7 remain proposals, without implementation.
+The normative specification, immutable baseline, Raven Core, ICD, and iOS are unchanged.
+
+- Windows: 27 scenarios in three CTest executables pass with warnings as errors.
+- [CI run 45862795803](https://github.com/ilyxas/litu_raven/actions/runs/45862795803)
+  passes all 29 Linux scenarios, ASan/UBSan, TSan, and firmware builds for MC ESP32-S3,
+  node ESP32, and node ESP32-S3. The Linux suite includes the actual TCP RX implementation.
+- Controlled host regression builds restore the old behavior separately: losing the
+  per-ticket SendDeadline, dropping a mandatory result, and missing Written before a
+  tick each fail the corresponding new assertion. The original log hook from `0b0eb63`
+  fails with access violation `0xc0000005` when invoked during installation. These are
+  isolated host reproductions, not claims of hardware fault injection.
+- Local ESP-IDF 6.1.1 images: MC 1 056 192 bytes; ordinary node 828 576 bytes.
+  MC Runtime is 32 272 bytes, +16 from the role/State correction; node Runtime is 10 256.
+  Message/Inbox remain 88/1 520; Session, PeerSlot, wire format, task/queue/ticket counts
+  and configured stacks are unchanged. The two console failure boundaries add bounded
+  callback storage; log-hook publication uses atomics. No pending-result queue is added.
+
+Fresh hardware verification used MC ESP32-S3 on COM4 and node ESP32 on COM6. Both were
+flashed with hash verification. Separate node restart and MC restart recovered Ready
+bindings. A clean run of the existing six-session TCP suite passed **6/6** on real Wi-Fi/lwIP,
+including abortive close/reconnect, malformed/partial frames, duplicate identity,
+slow reader containment, fresh keepalive on the other sessions, and recovery.
+The MC log records SendDeadline for the congested session.
+
+One intermediate bench attempt was interrupted by resetting MC while node still
+ran the test image: restoring an older sdkconfig had not regenerated its header.
+The test client's connect assertion failed while the AP was unavailable. That
+interrupted attempt is excluded from the PASS result above. Explicit reconfiguration
+removed the test option before restoring and checking ordinary firmware.
+
+Both boards were left running ordinary firmware with test probe/monitor disabled,
+verified in the generated header and by a final 45-second UART capture after MC reset.
+Both peer bindings returned Ready within 2.7 seconds in that capture, with no subsequent
+reset, panic, assert, watchdog, or exchange failure. Wi-Fi warnings were preserved in
+UART output and the journal. Final MC startup internal DMA heap was 110 508 bytes
+(minimum at that point 110 508; largest block 77 824). These are startup observations,
+not new worst-load heap/stack measurements. Serial ports were released.
+
+BLE advertising was observed on the updated MC. A new physical BLE-client ping/overflow
+test has not been confirmed; mandatory-result backpressure and generation isolation
+were verified by the host regressions. The earlier four-board 30-minute soak and
+connected-BLE load results above were not repeated for this correction and remain
+evidence for their recorded earlier firmware.

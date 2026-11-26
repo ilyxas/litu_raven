@@ -103,6 +103,13 @@ The subsequent role/State correction is recorded in [ADR-004](../ESP/docs/adr/00
 Its verification is recorded separately in [validation.md](../ESP/docs/validation.md);
 the hardware results above predate that correction.
 
+Independent-review findings 1–5 are corrected in `0a10075`: fatal RX handling,
+per-send terminal reasons, mandatory console-result failure handling, RTT
+availability, and log-hook startup. New verification is recorded separately in
+[validation.md](../ESP/docs/validation.md). Findings 6 (readiness event subscriptions)
+and 7 (runtime shutdown) remain proposals only; their implementation has not been
+authorized. Neither changes the normative architectural specification.
+
 ## Completed-stage history (before November 26)
 
 Earlier results and class placement are retained below as history; old demo commands/paths are
