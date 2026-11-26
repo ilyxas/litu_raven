@@ -136,8 +136,12 @@ struct ProbeOwner final : runtime::Service {
         CHECK(message.read(request));
         CHECK(message.request == request.request && request.device == 2 && request.console_generation == 9);
         ++executions;
-        const services::ProbeResult result{request.device, 12, request.console_generation, request.request,
-                                           services::Outcome::Succeeded};
+        const services::ProbeResult result{request.device,
+                                           12,
+                                           request.console_generation,
+                                           request.request,
+                                           services::Outcome::Succeeded,
+                                           true};
         CHECK(dispatcher
                   .deliver(runtime::destination(reply_endpoint),
                            runtime::Message::make(services::probe_result_id, request.request, result))
@@ -164,9 +168,12 @@ void diagnostics_contracts() {
     comms::CommunicationPort port(dispatcher, &session, 1, peer_endpoint, diagnostic_endpoint);
     diagnostics::Record records[8]{};
     diagnostics::Journal journal(records, 8);
-    services::DiagnosticsService diagnostics(port, state, dispatcher, journal, clock,
-                                             {[](void *) { return services::Metrics{}; }, nullptr}, {},
-                                             peer_endpoint, console_endpoint, true);
+    std::vector<uint32_t> failed_generations;
+    services::DiagnosticsService diagnostics(
+        port, state, dispatcher, journal, clock, {[](void *) { return services::Metrics{}; }, nullptr}, {},
+        peer_endpoint, console_endpoint, true,
+        {[](void *p, uint32_t generation) { static_cast<std::vector<uint32_t> *>(p)->push_back(generation); },
+         &failed_generations});
     ProbeOwner peer(dispatcher, diagnostic_endpoint);
     Console console;
     CHECK(dispatcher.bind(diagnostic_endpoint, diagnostics.inbox));
@@ -215,6 +222,37 @@ void diagnostics_contracts() {
     diagnostic_owner.step(now);
     console_owner.step(now);
     CHECK(console.lines.back() == "end peers");
+    CHECK(failed_generations.empty());
+
+    auto result = [&](bool measured, uint32_t generation) {
+        const services::ProbeResult reply{2, 0, generation, 22, services::Outcome::Succeeded, measured};
+        CHECK(dispatcher
+                  .deliver(runtime::destination(diagnostic_endpoint),
+                           runtime::Message::make(services::probe_result_id, 22, reply))
+                  .complete());
+        diagnostic_owner.step(now);
+    };
+    result(false, 9);
+    console_owner.step(now);
+    CHECK(console.lines.back() == "probe 22 success (RTT unavailable)");
+    result(true, 9);
+    console_owner.step(now);
+    CHECK(console.lines.back() == "probe 22 success 0 ms");
+
+    // Mandatory result loss at the final Inbox boundary uses the same failure
+    // policy as result loss before DiagnosticsService. Preserve correlation.
+    for (unsigned i = 0; i < runtime::Inbox::capacity; ++i) {
+        services::ConsoleLine line{};
+        line.generation = 9;
+        CHECK(dispatcher
+                  .deliver(runtime::destination(console_endpoint),
+                           runtime::Message::make(services::console_line_id, i, line))
+                  .complete());
+    }
+    result(true, 9);
+    result(false, 8); // Obsolete reply must name its own generation, never the current one.
+    CHECK(failed_generations == std::vector<uint32_t>({9, 8}));
+    CHECK(diagnostics.drops() == 2 && session.active(route));
 }
 } // namespace
 

@@ -90,6 +90,13 @@ even before the local writer publishes Written. Correlation uses route, generati
   3 seconds. Successful cycles generate no events. A passive node closes a session without Hello after 5 seconds.
 - RemoteNack, LocalRejected, SendDeadline, TransportLost, and ResponseTimeout are distinct. Timeout
   never synthesizes a "received NACK".
+- Session retirement preserves a recorded SendDeadline for the specific failed
+  send ticket. Other unfinished exchanges on the closed session report
+  TransportLost. Observing Closing before the next owner tick does not change
+  the failed operation's reason.
+- A response handler observes an available Written timestamp before checking the
+  semantic deadline; this does not depend on a preceding tick. Manual-probe RTT
+  availability is explicit (see [BLE console](ble-console.md)).
 
 Hello/KeepAlive are domain-idempotent: a repeated Hello preserves the binding and returns readiness;
 a repeated KeepAlive returns fresh status. A completed exchange is not reopened. An exactly-once

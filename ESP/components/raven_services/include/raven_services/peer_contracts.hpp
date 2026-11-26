@@ -32,6 +32,7 @@ struct ProbeResult {
     uint64_t elapsed_ms{};
     uint32_t console_generation{}, request{};
     Outcome outcome{};
+    bool has_elapsed{}; // false means unavailable, not a measured zero
 };
 const char *name(PeerStatus status);
 const char *name(Outcome result);

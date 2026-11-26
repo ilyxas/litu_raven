@@ -93,10 +93,12 @@ void ConsoleParser::feed(uint32_t generation, const uint8_t *bytes, size_t size,
 DiagnosticsService::DiagnosticsService(comms::CommunicationPort &port, const PeerState &peers,
                                        runtime::Dispatcher &dispatcher, diagnostics::Journal &journal,
                                        comms::Clock clock, MetricsSource metrics, EventOutput output,
-                                       uint8_t peer_endpoint, uint8_t ble_endpoint, bool mc)
+                                       uint8_t peer_endpoint, uint8_t ble_endpoint, bool mc,
+                                       ConsoleFailure console_failure)
     : port_(port), peers_(peers), dispatcher_(dispatcher), journal_(journal), clock_(clock),
       metrics_(metrics), output_(output), peer_endpoint_(peer_endpoint), ble_endpoint_(ble_endpoint),
-      mission_computer_(mc) {
+      mission_computer_(mc), console_failure_(console_failure) {
+    assert(console_failure_.close);
     const bool a = inbox.subscribe(comms::incoming(icd::Type::Diagnostic), sizeof(comms::Inbound),
                                    runtime::Policy::Ordered);
     const bool b = inbox.subscribe(console_command_id, sizeof(ConsoleRequest), runtime::Policy::Ordered);
@@ -120,8 +122,10 @@ bool DiagnosticsService::line(uint32_t generation, const char *format, ...) {
     value.size = uint8_t(std::min<size_t>(size_t(length), sizeof(value.text) - 1));
     const auto result = dispatcher_.deliver(runtime::destination(ble_endpoint_),
                                             runtime::Message::make(console_line_id, 0, value));
-    if (!result.complete())
+    if (!result.complete()) {
         ++drops_;
+        console_failure_(generation);
+    }
     return result.complete();
 }
 void DiagnosticsService::on_message(const runtime::Message &message, uint64_t) {
@@ -130,11 +134,15 @@ void DiagnosticsService::on_message(const runtime::Message &message, uint64_t) {
         if (!message.read(request))
             return;
         if (request.command == ConsoleCommand::WatchOn || request.command == ConsoleCommand::WatchOff) {
-            dispatcher_.deliver(
+            const auto result = dispatcher_.deliver(
                 runtime::destination(ble_endpoint_),
                 runtime::Message::make(
                     console_watch_id, request.request,
                     ConsoleWatch{request.generation, request.command == ConsoleCommand::WatchOn}));
+            if (!result.complete()) {
+                ++drops_;
+                console_failure_(request.generation);
+            }
             return;
         }
         if (reply_.command != ConsoleCommand::Invalid && reply_.generation == request.generation) {
@@ -163,9 +171,14 @@ void DiagnosticsService::on_message(const runtime::Message &message, uint64_t) {
             line(request.generation, "error: use help (commands end with LF)");
     } else if (message.id == probe_result_id) {
         ProbeResult result{};
-        if (message.read(result))
-            line(result.console_generation, "probe %lu %s %llu ms", (unsigned long)result.request,
-                 name(result.outcome), (unsigned long long)result.elapsed_ms);
+        if (message.read(result)) {
+            if (result.has_elapsed)
+                line(result.console_generation, "probe %lu %s %llu ms", (unsigned long)result.request,
+                     name(result.outcome), (unsigned long long)result.elapsed_ms);
+            else
+                line(result.console_generation, "probe %lu %s (RTT unavailable)",
+                     (unsigned long)result.request, name(result.outcome));
+        }
     } else if (message.id == comms::incoming(icd::Type::Diagnostic)) {
         comms::Inbound value{};
         if (!message.read(value))

@@ -109,6 +109,9 @@ Closure immediately prohibits new admission and new I/O leases. Manager calls `s
 active calls to finish, the RX parser to reset, and PeerService to retire, then closes the fd with
 abortive linger. Old unacknowledged TCP data does not retain closed-connection resources. Partial
 frames are not carried over, and queues are not replayed into a new connection.
+RX distinguishes retryable recv errors (EAGAIN/EWOULDBLOCK/EINTR) from fatal errors
+and EOF. Fatal errors and EOF close the affected generation through Session;
+retryable reads still enforce the absolute partial-frame deadline.
 
 Generation validation and the current Peer State commit occur under the same Session::Guard,
 with PeerState::Write already held. Lock order is PeerState → Session → Inbox; no I/O occurs under
@@ -134,3 +137,15 @@ RX/TX task pairs, six TX Inboxes, one PeerService, and one journal. Changing cap
 and verifying resources, not adding a class for each board. Build-specific limits (AP, sockets,
 16 local endpoint IDs) are explicit. Dozens of connections may require different task placement or
 transport; this document does not promise they fit on the same ESP32-S3 with the same RAM and Wi-Fi limits.
+
+## Current implementation boundaries
+
+Readiness updates currently reach PeerState and the diagnostic journal; a declared
+subscriber fan-out is not yet wired. This remains an implementation gap against
+SVC-03/DEL-01, not an alternative event contract. The proposed correction reuses
+composition-selected destination masks and Dispatcher admission reports.
+
+Runtime lifetime is currently static. Owners, RX loops, the connection manager,
+and radio callbacks have no coordinated runtime stop/join path. Session retirement
+does not satisfy ROOT-07. This historical gap requires a separately scoped lifecycle
+correction; the current review fixes do not implement runtime shutdown.

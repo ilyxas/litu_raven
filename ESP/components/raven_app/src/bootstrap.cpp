@@ -55,6 +55,7 @@ icd::DeviceDescriptor identity() {
 }
 struct Runtime;
 services::Metrics metrics(void *context);
+void fail_console(void *context, uint32_t generation);
 void serial_event(void *, const diagnostics::Record &r) {
     ESP_LOGI("Raven", "event=%u peer=%012llX boot=%016llX time=%llu %s (x%lu)", unsigned(r.code),
              (unsigned long long)r.device, (unsigned long long)r.boot, (unsigned long long)r.received_ms,
@@ -75,8 +76,8 @@ struct Runtime {
     std::array<services::PeerRecord, session_count * 2> peer_records{};
     services::PeerState peer_state{local, peer_records.data(), peer_records.size(), sessions.data(),
                                    sessions.size()};
-    services::PeerService peers{port,         dispatcher, peer_state,          clock,
-                                slots.data(), journal,    diagnostics_endpoint};
+    services::PeerService peers{port,         dispatcher, peer_state,           clock,
+                                slots.data(), journal,    diagnostics_endpoint, {fail_console, this}};
     services::DiagnosticsService diagnostics{port,
                                              peer_state,
                                              dispatcher,
@@ -86,7 +87,8 @@ struct Runtime {
                                              {serial_event, nullptr},
                                              peer_endpoint,
                                              ble_endpoint,
-                                             mission_computer};
+                                             mission_computer,
+                                             {fail_console, this}};
     OwnerTask peer_owner{peers, "peers", 5, 50, 4096};
     OwnerTask diagnostic_owner{diagnostics, "diagnostics", 3, 50, 4096};
     struct alignas(TcpEndpoint) EndpointStorage {
@@ -104,6 +106,15 @@ struct Runtime {
     explicit Runtime(WifiNetwork &wifi)
         : manager(wifi, endpoints.data(), endpoints.size(), mission_computer, CONFIG_RAVEN_TCP_PORT) {}
 };
+void fail_console(void *context, uint32_t generation) {
+#ifdef CONFIG_RAVEN_BLE_ENABLED
+    static_cast<Runtime *>(context)->ble.disconnect(generation);
+#else
+    // This composition exposes no console connection or manual-probe ingress.
+    (void)context;
+    (void)generation;
+#endif
+}
 services::Metrics metrics(void *context) {
     auto &r = *static_cast<Runtime *>(context);
     constexpr uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA;

@@ -144,6 +144,7 @@ struct Link : comms::PacketWriter {
     Device *remote{};
     comms::SessionKey remote_key{};
     bool drop{}, fail{};
+    comms::Failure failure{comms::Failure::None};
     unsigned sent{};
     std::function<void()> before_return;
     std::function<bool(const uint8_t *, size_t)> deliver;
@@ -192,9 +193,14 @@ struct Device {
     runtime::Executor service_executor{service, 50}, tx_executor{tx, 50}, sink_executor{sink, 50};
     comms::LengthFrameReader reader;
     comms::SessionKey key;
+    uint32_t failed_console{};
+    services::ConsoleFailure console_failure() {
+        return {[](void *p, uint32_t generation) { static_cast<Device *>(p)->failed_console = generation; },
+                this};
+    }
     Device(icd::Role role, uint64_t id)
         : state(identity(role, id), peers, 2, &session, 1),
-          service(port, dispatcher, state, clock, &slot, journal, 2) {
+          service(port, dispatcher, state, clock, &slot, journal, 2, console_failure()) {
         session.configure(0, 0);
         CHECK(dispatcher.bind(0, tx.inbox));
         CHECK(dispatcher.bind(1, service.inbox));
@@ -238,7 +244,7 @@ comms::Failure Link::write_packet(comms::SessionKey, const uint8_t *packet, size
     }
     if (before_return)
         before_return();
-    return comms::Failure::None;
+    return failure;
 }
 struct Pair {
     Device mc{icd::Role::MissionComputer, 1}, node{icd::Role::Node, 2};
@@ -480,7 +486,8 @@ void six_peer_profile() {
     services::PeerRecord peers[count * 2]{};
     services::PeerState peer_state(identity(icd::Role::MissionComputer, 1), peers, count * 2, sessions.data(),
                                    count);
-    services::PeerService mc(port, dispatcher, peer_state, clock, slots, journal, count + 1);
+    services::PeerService mc(port, dispatcher, peer_state, clock, slots, journal, count + 1,
+                             {[](void *, uint32_t) { CHECK(false); }, nullptr});
     runtime::Executor owner(mc, 50);
     Sink sink;
     CHECK(dispatcher.bind(count, mc.inbox));
@@ -648,7 +655,7 @@ void console_journal_reply() {
     CHECK(d.dispatcher.bind(3, console.inbox));
     services::DiagnosticsService service(d.port, d.state, d.dispatcher, d.journal, d.clock,
                                          {[](void *) { return services::Metrics{}; }, nullptr}, {}, 1, 3,
-                                         true);
+                                         true, d.console_failure());
     runtime::Executor output(console, 50);
     const char *long_text = "0123456789012345678901234567890123456789abcdefghijABCDEFGHIJ-tail-preserved";
     d.journal.append(diagnostics::Event::SystemWarning, 100, 1, 2, long_text);
@@ -661,6 +668,137 @@ void console_journal_reply() {
     }
     CHECK(console.lines.size() == 6 && console.lines.back() == "end logs");
     CHECK(console.lines[3].substr(2) + console.lines[4].substr(2) == long_text);
+}
+// Drive one owner message without an intervening tick, so ordering regressions
+// are deterministic rather than dependent on host thread scheduling.
+void handle_one(runtime::Component &owner, uint64_t now) {
+    runtime::Message message;
+    CHECK(owner.inbox.take_normal(message));
+    owner.on_message(message, now);
+}
+void begin_probe(Device &d, uint64_t device = 2, uint32_t request = 42, uint32_t generation = 4) {
+    CHECK(d.dispatcher
+              .deliver(runtime::destination(1),
+                       runtime::Message::make(services::probe_request_id, request,
+                                              services::ProbeRequest{device, generation, request}))
+              .complete());
+    handle_one(d.service, d.now);
+}
+void probe_response(Device &d) {
+    const auto &exchange = d.slot.exchanges[1];
+    icd::Packet response{};
+    response.type = icd::Type::KeepAliveResponse;
+    response.exchange = exchange.request.exchange;
+    response.body.set(exchange.request.body.get<icd::Heartbeat>());
+    CHECK(d.port.receive(d.key, response, d.now) == comms::Post::Accepted);
+    handle_one(d.service, d.now);
+}
+void send_deadline_retirement() {
+    for (bool close_first : {false, true}) {
+        Pair pair;
+        pair.ready();
+        auto &d = pair.mc;
+        d.link.drop = true;
+        begin_probe(d);
+        // A second operation has a queued send but has not exceeded its budget.
+        d.slot.next_heartbeat = d.now;
+        d.service.on_tick(d.now);
+        CHECK(d.slot.exchanges[0].active && d.slot.exchanges[1].active);
+        if (close_first) {
+            d.link.failure = comms::Failure::SendDeadline;
+            d.tx_executor.step(d.now); // Real TX publishes Failed then closes.
+            CHECK(d.session.snapshot().phase == comms::Phase::Closing);
+        } else {
+            const auto ticket = d.slot.exchanges[1].ticket;
+            uint64_t deadline{};
+            CHECK(d.session.begin(ticket, d.key, d.now, deadline));
+            d.session.finish(ticket, d.key, d.now, comms::Failure::SendDeadline);
+            d.service.on_tick(d.now); // Owner observes Failed before TX closes.
+            d.session.close(d.key, comms::Failure::SendDeadline);
+        }
+        d.service.on_tick(d.now);
+        handle_one(d.sink, d.now);
+        CHECK(d.sink.last.outcome == services::Outcome::SendDeadline);
+        CHECK(d.slot.exchanges[1].outcome == services::Outcome::SendDeadline);
+        CHECK(d.slot.exchanges[0].outcome == services::Outcome::TransportLost);
+        CHECK(d.session.snapshot().peer_retired && !d.failed_console);
+    }
+}
+void probe_result_backpressure() {
+    for (unsigned path = 0; path < 3; ++path) {
+        Pair pair;
+        pair.ready();
+        auto &d = pair.mc;
+        d.link.drop = true;
+        if (path != 1)
+            begin_probe(d); // The original operation is admitted.
+        for (unsigned i = 0; i < runtime::Inbox::capacity; ++i)
+            CHECK(d.dispatcher
+                      .deliver(runtime::destination(2),
+                               runtime::Message::make(services::probe_result_id, i, services::ProbeResult{}))
+                      .complete());
+        if (path == 0) {
+            d.tx_executor.step(d.now);
+            d.now += 9;
+            probe_response(d); // Completed operation cannot deliver its result.
+            CHECK(d.slot.exchanges[1].outcome == services::Outcome::Succeeded);
+        } else {
+            // Unknown peer and busy manual slot both owe a correlated rejection.
+            begin_probe(d, path == 1 ? 99 : 2, 43);
+            if (path == 2)
+                CHECK(d.slot.exchanges[1].active); // The earlier operation is not cancelled.
+        }
+        CHECK(d.failed_console == 4);
+        CHECK(d.session.active(d.key)); // Only the console failure boundary is invoked.
+        CHECK(d.sink.inbox.pending() == runtime::Inbox::capacity);
+    }
+}
+void probe_rtt_without_tick() {
+    for (uint64_t elapsed : {uint64_t(0), uint64_t(17)}) {
+        Pair pair;
+        pair.ready();
+        auto &d = pair.mc;
+        d.link.drop = true;
+        begin_probe(d);
+        d.now += 5;
+        d.tx_executor.step(d.now);
+        CHECK(!d.slot.exchanges[1].has_written); // No owner tick copied Written.
+        d.now += elapsed;
+        probe_response(d);
+        handle_one(d.sink, d.now);
+        CHECK(d.sink.last.outcome == services::Outcome::Succeeded);
+        CHECK(d.sink.last.has_elapsed && d.sink.last.elapsed_ms == elapsed);
+    }
+}
+void probe_rtt_before_written() {
+    Pair pair;
+    pair.ready();
+    auto &d = pair.mc;
+    d.link.drop = true;
+    begin_probe(d);
+    d.link.before_return = [&] {
+        d.now += 17;
+        CHECK(d.session.progress(d.slot.exchanges[1].ticket).phase == comms::SendPhase::Writing);
+        probe_response(d);
+    };
+    d.tx_executor.step(d.now);
+    handle_one(d.sink, d.now);
+    CHECK(d.sink.last.outcome == services::Outcome::Succeeded);
+    CHECK(!d.sink.last.has_elapsed); // Success is valid, but an RTT is not available.
+}
+void response_deadline_without_tick() {
+    Pair pair;
+    pair.ready();
+    auto &d = pair.mc;
+    d.link.drop = true;
+    begin_probe(d);
+    d.tx_executor.step(d.now);
+    d.now += 3000;
+    probe_response(d);
+    CHECK(d.sink.inbox.pending() == 0 && d.state.stale_messages() == 1);
+    d.service.on_tick(d.now);
+    handle_one(d.sink, d.now);
+    CHECK(d.sink.last.outcome == services::Outcome::ResponseTimeout && !d.sink.last.has_elapsed);
 }
 int main() {
     codec();
@@ -680,5 +818,10 @@ int main() {
     captured_logs();
     packet_boundary();
     console_journal_reply();
-    std::puts("PASS 17 communication scenarios");
+    send_deadline_retirement();
+    probe_result_backpressure();
+    probe_rtt_without_tick();
+    probe_rtt_before_written();
+    response_deadline_without_tick();
+    std::puts("PASS 22 communication scenarios");
 }

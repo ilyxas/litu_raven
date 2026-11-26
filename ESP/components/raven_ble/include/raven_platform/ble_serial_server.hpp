@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "host/ble_hs.h"
 #include "nimble/nimble_npl.h"
+#include "raven_platform/connection_failure.hpp"
 #include <array>
 #include <atomic>
 
@@ -31,7 +32,7 @@ class BleSerialServer {
         return handle ? unsigned(uxTaskGetStackHighWaterMark(handle)) : 0;
     }
     bool tx_idle() const { return uxQueueMessagesWaiting(tx_) == 0 && !sending_; }
-    void disconnect(uint32_t session) { failed_session_ = session; }
+    void disconnect(uint32_t session) { fail_connection_generation(session_, failed_session_, session); }
 
   private:
     struct Frame {

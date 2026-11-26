@@ -2,6 +2,7 @@
 #include "raven_comms/tx_component.hpp"
 #include "raven_core/service.hpp"
 #include "raven_diagnostics/journal.hpp"
+#include "raven_services/console_failure.hpp"
 #include "raven_services/peer_state.hpp"
 
 namespace raven::services {
@@ -30,11 +31,12 @@ class PeerService final : public runtime::Service {
   public:
     PeerService(comms::CommunicationPort &port, runtime::Dispatcher &dispatcher, PeerState &state,
                 comms::Clock clock, PeerSlot *slots, diagnostics::Journal &journal,
-                uint8_t diagnostics_endpoint);
+                uint8_t diagnostics_endpoint, ConsoleFailure console_failure);
     void on_message(const runtime::Message &message, uint64_t now) override;
     void on_tick(uint64_t now) override;
 
   private:
+    void publish_probe(const ProbeResult &result, uint64_t now, icd::BootId boot = 0);
     void open_slot(PeerSlot &slot, comms::SessionKey route, uint64_t now);
     bool register_peer(PeerState::Write &state, PeerSlot &slot, const icd::DeviceDescriptor &descriptor,
                        uint64_t now);
@@ -54,6 +56,7 @@ class PeerService final : public runtime::Service {
     PeerSlot *slots_;
     diagnostics::Journal &journal_;
     uint8_t diagnostics_endpoint_;
+    ConsoleFailure console_failure_;
     uint32_t exchange_counter_{};
 };
 } // namespace raven::services

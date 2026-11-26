@@ -98,12 +98,12 @@ comms::Failure TcpChannel::write_packet(comms::SessionKey route, const uint8_t *
 }
 int TcpChannel::receive(comms::SessionKey route, uint8_t *bytes, size_t capacity) {
     if (!session_.acquire_io(route))
-        return -2;
+        return receive_failed;
     const int fd = descriptor_.load();
     const int count = fd < 0 ? 0 : recv(fd, bytes, capacity, 0);
     const bool again = count < 0 && retryable();
     session_.release_io();
-    return again ? -1 : count;
+    return count < 0 ? (again ? receive_retry : receive_failed) : count;
 }
 void TcpChannel::interrupt() {
     if (interrupted_)
@@ -158,7 +158,7 @@ void TcpEndpoint::receive_loop() {
             reading_ = state.key;
         }
         const int count = channel_.receive(reading_, receive_buffer_.data(), receive_buffer_.size());
-        if (count == -1) {
+        if (count == TcpChannel::receive_retry) {
             if (reader_.expired(now_ms()))
                 session_.close(reading_, comms::Failure::Protocol);
         } else if (count <= 0)

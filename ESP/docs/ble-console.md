@@ -38,3 +38,17 @@ An overlong/invalid input line is discarded in full through LF. Reconnect clears
 and prevents an old response from reaching a new generation. Overflow of a mandatory BLE response
 or loss of an RX fragment closes only the BLE connection. TCP peer exchange continues.
 The BLE console does not own PeerService deadlines and does not forward raw sockets.
+
+Mandatory probe outcomes use this failure policy at both delivery boundaries:
+PeerService → DiagnosticsService and DiagnosticsService → BLE TX. If either Inbox
+rejects the result, the originating console generation is closed through a
+composition-supplied failure boundary; TCP sessions and the operation's recorded
+outcome are unaffected. Unknown-peer and busy-probe rejections use the same path.
+No additional pending-result queue is allocated. Delayed failures from an old
+console generation cannot close a replacement or clear its failure indication.
+
+RTT is measured from the first local Written timestamp to processing the semantic
+response. The result reads an available ticket timestamp without waiting for a
+tick. If the response precedes publication of Written, or no valid timestamp is
+available, the console reports `RTT unavailable`; this differs from a measured
+`0 ms`. Failure outcomes do not claim a measured round trip.

@@ -2,6 +2,7 @@
 #include "raven_comms/tx_component.hpp"
 #include "raven_core/service.hpp"
 #include "raven_diagnostics/journal.hpp"
+#include "raven_services/console_failure.hpp"
 #include "raven_services/peer_state.hpp"
 #include <array>
 #include <atomic>
@@ -67,7 +68,7 @@ class DiagnosticsService final : public runtime::Service {
     DiagnosticsService(comms::CommunicationPort &port, const PeerState &peers,
                        runtime::Dispatcher &dispatcher, diagnostics::Journal &journal, comms::Clock clock,
                        MetricsSource metrics, EventOutput output, uint8_t peer_endpoint, uint8_t ble_endpoint,
-                       bool mission_computer);
+                       bool mission_computer, ConsoleFailure console_failure);
     void on_message(const runtime::Message &message, uint64_t now) override;
     void on_tick(uint64_t now) override;
     uint32_t drops() const { return drops_.load(); }
@@ -84,6 +85,7 @@ class DiagnosticsService final : public runtime::Service {
     EventOutput output_;
     uint8_t peer_endpoint_, ble_endpoint_;
     bool mission_computer_;
+    ConsoleFailure console_failure_;
     ConsoleRequest reply_{};
     diagnostics::Record log_reply_{};
     PeerRecord peer_reply_{};

@@ -11,6 +11,8 @@ namespace raven {
 class TcpChannel final : public comms::PacketWriter {
   public:
     explicit TcpChannel(comms::Session &session) : session_(session) {}
+    // Positive byte count, zero EOF, or one of these distinct error outcomes.
+    static constexpr int receive_retry = -1, receive_failed = -2;
     bool attach(int descriptor, uint64_t now);
     comms::Failure write_packet(comms::SessionKey route, const uint8_t *packet, size_t packet_size,
                                 uint64_t deadline) override;

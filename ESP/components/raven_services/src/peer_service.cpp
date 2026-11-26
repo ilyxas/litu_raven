@@ -11,11 +11,21 @@ constexpr uint64_t hello_retry_ms = 1000;
 constexpr uint64_t heartbeat_interval_ms = 1000;
 constexpr uint64_t passive_hello_timeout_ms = 5000;
 constexpr unsigned hello_attempt_limit = 3;
+void observe_written(PendingExchange &pending, const SendRecord &progress) {
+    if (pending.active && !pending.has_written && progress.phase == SendPhase::Written) {
+        pending.has_written = true;
+        pending.first_written = progress.finished;
+        pending.deadline = progress.finished + semantic_timeout_ms;
+        pending.next_retry = progress.finished + hello_retry_ms;
+    }
+}
 } // namespace
 PeerService::PeerService(CommunicationPort &port, runtime::Dispatcher &dispatcher, PeerState &state,
-                         Clock clock, PeerSlot *slots, diagnostics::Journal &journal, uint8_t endpoint)
+                         Clock clock, PeerSlot *slots, diagnostics::Journal &journal, uint8_t endpoint,
+                         ConsoleFailure console_failure)
     : port_(port), dispatcher_(dispatcher), state_(state), clock_(clock), slots_(slots), journal_(journal),
-      diagnostics_endpoint_(endpoint) {
+      diagnostics_endpoint_(endpoint), console_failure_(console_failure) {
+    assert(console_failure_.close);
     for (uint16_t id = uint16_t(icd::Type::HelloRequest); id <= uint16_t(icd::Type::Receipt); ++id) {
         const bool ok = inbox.subscribe(incoming(icd::Type(id)), sizeof(Inbound), runtime::Policy::Ordered);
         assert(ok);
@@ -80,25 +90,40 @@ void PeerService::readiness(PeerState::Write &state, PeerSlot &slot, icd::Readin
     journal_.append(status == PeerStatus::Ready ? Event::PeerReady : Event::PeerNotReady, now,
                     peer.descriptor.device, peer.descriptor.boot, name(status));
 }
+void PeerService::publish_probe(const ProbeResult &result, uint64_t now, icd::BootId boot) {
+    const auto delivered =
+        dispatcher_.deliver(runtime::destination(diagnostics_endpoint_),
+                            runtime::Message::make(probe_result_id, result.request, result));
+    // A finite operation retains its own outcome. Failure to deliver its
+    // mandatory reply invalidates only the originating console generation.
+    if (!delivered.complete())
+        console_failure_(result.console_generation);
+    journal_.append(Event::ProbeCompleted, now, result.device, boot,
+                    delivered.complete() ? name(result.outcome) : "probe complete; console delivery failed");
+}
 void PeerService::complete(PeerState::Write &state, PeerSlot &slot, PendingExchange &pending, Outcome result,
                            uint64_t now) {
     if (!pending.active)
         return;
+    auto *session = port_.session(slot.route);
+    if (session && pending.ticket)
+        observe_written(pending, session->progress(pending.ticket));
     pending.active = false;
     pending.outcome = result;
-    auto *session = port_.session(slot.route);
     if (session && pending.ticket)
         session->cancel(pending.ticket);
     const auto id = slot.established ? state.record(slot.peer_index).descriptor.device : 0;
     const auto boot = slot.established ? state.record(slot.peer_index).descriptor.boot : 0;
     if (pending.manual) {
-        const ProbeResult reply{id, pending.has_written ? now - pending.first_written : 0,
-                                pending.console_generation, pending.console_request, result};
-        const auto delivered =
-            dispatcher_.deliver(runtime::destination(diagnostics_endpoint_),
-                                runtime::Message::make(probe_result_id, pending.console_request, reply));
-        journal_.append(Event::ProbeCompleted, now, id, boot,
-                        delivered.complete() ? name(result) : "probe complete; console busy");
+        const bool measured =
+            result == Outcome::Succeeded && pending.has_written && now >= pending.first_written;
+        const ProbeResult reply{id,
+                                measured ? now - pending.first_written : 0,
+                                pending.console_generation,
+                                pending.console_request,
+                                result,
+                                measured};
+        publish_probe(reply, now, boot);
     } else if (result != Outcome::Succeeded) {
         journal_.append(Event::ExchangeFailed, now, id, boot, name(result), 2);
     }
@@ -126,6 +151,9 @@ void PeerService::start_exchange(PeerState::Write &state, PeerSlot &slot, Pendin
     if (pending.active || pending.ticket)
         return;
     if (exchange_counter_ == UINT32_MAX) {
+        if (probe)
+            publish_probe(
+                {probe->device, 0, probe->console_generation, probe->request, Outcome::LocalRejected}, now);
         port_.at(slot.route.slot).close(slot.route, Failure::Protocol);
         return;
     }
@@ -151,12 +179,7 @@ void PeerService::advance(PeerState::Write &state, PeerSlot &slot, PendingExchan
     auto &session = port_.at(slot.route.slot);
     if (p.ticket) {
         const auto progress = session.progress(p.ticket);
-        if (progress.phase == SendPhase::Written && p.active && !p.has_written) {
-            p.has_written = true;
-            p.first_written = progress.finished;
-            p.deadline = p.first_written + semantic_timeout_ms;
-            p.next_retry = p.first_written + hello_retry_ms;
-        }
+        observe_written(p, progress);
         if (progress.phase == SendPhase::Failed && p.active)
             complete(state, slot, p,
                      progress.reason == Failure::SendDeadline ? Outcome::SendDeadline
@@ -191,8 +214,18 @@ void PeerService::open_slot(PeerSlot &slot, SessionKey route, uint64_t now) {
     journal_.append(Event::LinkOpened, now, 0, 0, text);
 }
 void PeerService::close_slot(PeerState::Write &state, PeerSlot &slot, Failure failure, uint64_t now) {
-    for (auto &pending : slot.exchanges)
-        complete(state, slot, pending, Outcome::TransportLost, now);
+    for (auto &pending : slot.exchanges) {
+        // Session closure fails other queued writes with TransportLost, while
+        // preserving an already terminal ticket. Retire each exchange using
+        // its own send result, independently of which owner ran first.
+        const auto progress = port_.at(slot.route.slot).progress(pending.ticket);
+        const auto outcome = pending.ticket && progress.route == slot.route &&
+                                     progress.phase == SendPhase::Failed &&
+                                     progress.reason == Failure::SendDeadline
+                                 ? Outcome::SendDeadline
+                                 : Outcome::TransportLost;
+        complete(state, slot, pending, outcome, now);
+    }
     icd::DeviceId id = 0;
     icd::BootId boot = 0;
     if (slot.established) {
@@ -280,8 +313,7 @@ void PeerService::on_message(const runtime::Message &message, uint64_t) {
         }
         const ProbeResult reply{probe.device, 0, probe.console_generation, probe.request,
                                 Outcome::LocalRejected};
-        dispatcher_.deliver(runtime::destination(diagnostics_endpoint_),
-                            runtime::Message::make(probe_result_id, probe.request, reply));
+        publish_probe(reply, now);
         return;
     }
     Inbound input{};
@@ -342,6 +374,13 @@ void PeerService::on_message(const runtime::Message &message, uint64_t) {
                      input.body.get<icd::Receipt>().request_type == p.request.type);
                 if (matching)
                     match = &p;
+            }
+            // A response may be handled before the next tick. Observe Written
+            // under the existing generation guard before checking its deadline.
+            if (match && match->ticket && match->ticket.slot < guard.state.sends.size()) {
+                const auto &progress = guard.state.sends[match->ticket.slot];
+                if (progress.generation == match->ticket.generation && progress.route == input.route)
+                    observe_written(*match, progress);
             }
             if (!match || (match->has_written && now >= match->deadline)) {
                 state.note_stale();
