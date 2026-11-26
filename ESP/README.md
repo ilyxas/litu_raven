@@ -54,6 +54,7 @@ ctest --test-dir build/host --output-on-failure
 - [BLE console](docs/ble-console.md).
 - [Resources and reproducible verification](docs/validation.md).
 - [ADR-003: boundaries and deliberate cleanup](docs/adr/0003-device-communication.md).
+- [ADR-004: explicit roles and independent peer state](docs/adr/0004-explicit-roles-and-peer-state.md).
 
 Arm Demo, FC/MSP, the old TCP/JSON/telemetry gateways, and ESP compatibility with the previous iOS protocol
 have been removed. The iOS project is unchanged. Earlier experiments remain available in Git and ADR-001/002;

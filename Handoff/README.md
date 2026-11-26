@@ -99,6 +99,10 @@ a real six-session TCP suite with BLE connected; four physical boards with indep
 a stable 30-minute soak. Ordinary firmware without test monitor/probe was left on COM4/5/6/7, and
 the shared handshake was confirmed after flashing. Ports were released; always recheck current COM assignments.
 
+The subsequent role/State correction is recorded in [ADR-004](../ESP/docs/adr/0004-explicit-roles-and-peer-state.md).
+Its verification is recorded separately in [validation.md](../ESP/docs/validation.md);
+the hardware results above predate that correction.
+
 ## Completed-stage history (before November 26)
 
 Earlier results and class placement are retained below as history; old demo commands/paths are
@@ -139,6 +143,7 @@ A side chat performed the [first independent review](https://github.com/ilyxas/l
 - [BLE console](../ESP/docs/ble-console.md).
 - [Resources and verification](../ESP/docs/validation.md).
 - [ADR-003: communication and cleanup](../ESP/docs/adr/0003-device-communication.md).
+- [ADR-004: explicit roles and independent peer state](../ESP/docs/adr/0004-explicit-roles-and-peer-state.md).
 - [Historical ADR-002: components and BLE](../ESP/docs/adr/0002-role-components-and-ble-console.md).
 - [ADR-001: delivery and execution](../ESP/docs/adr/0001-delivery-and-execution.md).
 - [iOS direction](../IOS/docs/architecture_note_draft.md).

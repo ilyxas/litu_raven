@@ -47,7 +47,7 @@ inline bool terminal(SendPhase phase) {
 
 // One reusable channel slot. The same lock linearizes close, admission and
 // peer-state commits. No I/O or behavioral callback may run while holding it.
-// Lock order: PeerService state -> Session -> Inbox. RX never takes PeerState.
+// Lock order: PeerState -> Session -> Inbox. RX never takes PeerState.
 class Session {
   public:
     static constexpr uint64_t local_send_budget_ms = 250;

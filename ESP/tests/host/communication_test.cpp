@@ -184,6 +184,7 @@ struct Device {
     diagnostics::Journal journal{records, 16};
     services::PeerSlot slot;
     services::PeerRecord peers[2]{};
+    services::PeerState state;
     services::PeerService service;
     Link link;
     comms::TxComponent tx{session, link, clock};
@@ -192,7 +193,8 @@ struct Device {
     comms::LengthFrameReader reader;
     comms::SessionKey key;
     Device(icd::Role role, uint64_t id)
-        : service(port, dispatcher, identity(role, id), clock, &slot, peers, 2, journal, 2) {
+        : state(identity(role, id), peers, 2, &session, 1),
+          service(port, dispatcher, state, clock, &slot, journal, 2) {
         session.configure(0, 0);
         CHECK(dispatcher.bind(0, tx.inbox));
         CHECK(dispatcher.bind(1, service.inbox));
@@ -257,8 +259,8 @@ struct Pair {
     void ready() {
         run(20);
         services::PeerRecord p{};
-        CHECK(mc.service.peer(0, p) && p.status == services::PeerStatus::Ready);
-        CHECK(node.service.peer(0, p) && p.status == services::PeerStatus::Ready);
+        CHECK(mc.state.peer(0, p) && p.status == services::PeerStatus::Ready);
+        CHECK(node.state.peer(0, p) && p.status == services::PeerStatus::Ready);
     }
 };
 void exchange() {
@@ -267,7 +269,10 @@ void exchange() {
     p.run(600);
     CHECK(p.mc.session.active(p.mc.key) && p.node.session.active(p.node.key));
     CHECK(p.mc.link.sent > 5 && p.node.link.sent > 5);
-    CHECK(p.mc.service.probe(2, 4, 5) == runtime::Delivery::Accepted);
+    CHECK(p.mc.dispatcher
+              .deliver(runtime::destination(1),
+                       runtime::Message::make(services::probe_request_id, 5, services::ProbeRequest{2, 4, 5}))
+              .complete());
     p.run(20);
     CHECK(p.mc.sink.results == 1 && p.mc.sink.last.outcome == services::Outcome::Succeeded);
     CHECK(p.mc.sink.last.console_generation == 4 && p.mc.sink.last.request == 5);
@@ -342,11 +347,11 @@ void stale_generation() {
     CHECK(p.mc.key != old);
     p.mc.service.on_tick(p.mc.now);
     p.mc.service_executor.step(p.mc.now);
-    CHECK(p.mc.service.stale_messages() == 1);
+    CHECK(p.mc.state.stale_messages() == 1);
     services::PeerRecord peer{};
-    CHECK(p.mc.service.peer(0, peer));
+    CHECK(p.mc.state.peer(0, peer));
     CHECK(peer.descriptor.device == 2 && peer.status == services::PeerStatus::Disconnected);
-    CHECK(!p.mc.service.peer(1, peer));
+    CHECK(!p.mc.state.peer(1, peer));
     CHECK(p.mc.port.send(old, late) == comms::Post::StaleRoute);
     p.mc.session.close(old, comms::Failure::Protocol);
     CHECK(p.mc.session.active(p.mc.key));
@@ -473,8 +478,9 @@ void six_peer_profile() {
     diagnostics::Journal journal(records, 64);
     services::PeerSlot slots[count]{};
     services::PeerRecord peers[count * 2]{};
-    services::PeerService mc(port, dispatcher, identity(icd::Role::MissionComputer, 1), clock, slots, peers,
-                             count * 2, journal, count + 1);
+    services::PeerState peer_state(identity(icd::Role::MissionComputer, 1), peers, count * 2, sessions.data(),
+                                   count);
+    services::PeerService mc(port, dispatcher, peer_state, clock, slots, journal, count + 1);
     runtime::Executor owner(mc, 50);
     Sink sink;
     CHECK(dispatcher.bind(count, mc.inbox));
@@ -527,7 +533,7 @@ void six_peer_profile() {
     advance(500);
     for (size_t i = 0; i < count; ++i) {
         services::PeerRecord p{};
-        CHECK(mc.peer(i, p) && p.status == services::PeerStatus::Ready);
+        CHECK(peer_state.peer(i, p) && p.status == services::PeerStatus::Ready);
     }
     // Loss and late data on one route must leave all other peer bindings intact.
     sessions[2].close(keys[2], comms::Failure::TransportLost);
@@ -640,8 +646,9 @@ void console_journal_reply() {
         }
     } console;
     CHECK(d.dispatcher.bind(3, console.inbox));
-    services::DiagnosticsService service(d.port, d.service, d.dispatcher, d.journal, d.clock,
-                                         {[](void *) { return services::Metrics{}; }, nullptr}, {}, 3, true);
+    services::DiagnosticsService service(d.port, d.state, d.dispatcher, d.journal, d.clock,
+                                         {[](void *) { return services::Metrics{}; }, nullptr}, {}, 1, 3,
+                                         true);
     runtime::Executor output(console, 50);
     const char *long_text = "0123456789012345678901234567890123456789abcdefghijABCDEFGHIJ-tail-preserved";
     d.journal.append(diagnostics::Event::SystemWarning, 100, 1, 2, long_text);

@@ -2,8 +2,9 @@
 #include "raven_core/inbox.hpp"
 
 namespace raven::runtime {
-// Behavioral owner: subscribe in construction; only its Executor calls the
+// Executable owner: subscribe in construction; only its Executor calls the
 // handlers. Callbacks/producers post copies to inbox instead of invoking them.
+// Activity/Service declare behavioral roles; adapters may remain Components.
 class Component {
   public:
     virtual ~Component() = default;

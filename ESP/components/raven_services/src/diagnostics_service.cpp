@@ -90,12 +90,13 @@ void ConsoleParser::feed(uint32_t generation, const uint8_t *bytes, size_t size,
             line_[used_++] = char(c);
     }
 }
-DiagnosticsService::DiagnosticsService(comms::CommunicationPort &port, PeerService &peers,
+DiagnosticsService::DiagnosticsService(comms::CommunicationPort &port, const PeerState &peers,
                                        runtime::Dispatcher &dispatcher, diagnostics::Journal &journal,
                                        comms::Clock clock, MetricsSource metrics, EventOutput output,
-                                       uint8_t ble_endpoint, bool mc)
+                                       uint8_t peer_endpoint, uint8_t ble_endpoint, bool mc)
     : port_(port), peers_(peers), dispatcher_(dispatcher), journal_(journal), clock_(clock),
-      metrics_(metrics), output_(output), ble_endpoint_(ble_endpoint), mission_computer_(mc) {
+      metrics_(metrics), output_(output), peer_endpoint_(peer_endpoint), ble_endpoint_(ble_endpoint),
+      mission_computer_(mc) {
     const bool a = inbox.subscribe(comms::incoming(icd::Type::Diagnostic), sizeof(comms::Inbound),
                                    runtime::Policy::Ordered);
     const bool b = inbox.subscribe(console_command_id, sizeof(ConsoleRequest), runtime::Policy::Ordered);
@@ -141,9 +142,11 @@ void DiagnosticsService::on_message(const runtime::Message &message, uint64_t) {
             return;
         }
         if (request.command == ConsoleCommand::Ping) {
-            const auto result = peers_.probe(request.argument, request.generation, request.request);
-            line(request.generation,
-                 result == runtime::Delivery::Accepted ? "probe %lu admitted" : "probe %lu rejected locally",
+            const ProbeRequest probe{request.argument, request.generation, request.request};
+            const auto result =
+                dispatcher_.deliver(runtime::destination(peer_endpoint_),
+                                    runtime::Message::make(probe_request_id, request.request, probe));
+            line(request.generation, result.complete() ? "probe %lu admitted" : "probe %lu rejected locally",
                  (unsigned long)request.request);
             return;
         }

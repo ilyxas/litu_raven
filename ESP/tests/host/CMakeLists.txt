@@ -27,6 +27,8 @@ add_library(raven_portable OBJECT
     ${COMPONENTS}/raven_comms/src/tx_component.cpp
     ${COMPONENTS}/raven_diagnostics/src/journal.cpp
     ${COMPONENTS}/raven_diagnostics/src/log_capture.cpp
+    ${COMPONENTS}/raven_services/src/peer_contracts.cpp
+    ${COMPONENTS}/raven_services/src/peer_state.cpp
     ${COMPONENTS}/raven_services/src/peer_service.cpp
     ${COMPONENTS}/raven_services/src/diagnostics_service.cpp)
 foreach(component raven_core raven_icd raven_comms raven_diagnostics raven_services)
@@ -41,3 +43,6 @@ endif()
 add_executable(communication_test communication_test.cpp)
 target_link_libraries(communication_test PRIVATE raven_portable)
 add_test(NAME communication COMMAND communication_test)
+add_executable(service_contract_test service_contract_test.cpp)
+target_link_libraries(service_contract_test PRIVATE raven_portable)
+add_test(NAME service_contracts COMMAND service_contract_test)

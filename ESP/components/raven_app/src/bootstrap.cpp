@@ -8,6 +8,7 @@
 #include "raven_platform/system_log.hpp"
 #include "raven_platform/tcp_network.hpp"
 #include "raven_services/diagnostics_service.hpp"
+#include "raven_services/peer_service.hpp"
 #include "sdkconfig.h"
 #include <algorithm>
 #include <array>
@@ -72,12 +73,20 @@ struct Runtime {
     diagnostics::Journal journal{records.data(), records.size()};
     std::array<services::PeerSlot, session_count> slots{};
     std::array<services::PeerRecord, session_count * 2> peer_records{};
-    services::PeerService peers{
-        port,    dispatcher,          local, clock, slots.data(), peer_records.data(), peer_records.size(),
-        journal, diagnostics_endpoint};
-    services::DiagnosticsService diagnostics{
-        port,         peers,           dispatcher, journal, clock, {metrics, this}, {serial_event, nullptr},
-        ble_endpoint, mission_computer};
+    services::PeerState peer_state{local, peer_records.data(), peer_records.size(), sessions.data(),
+                                   sessions.size()};
+    services::PeerService peers{port,         dispatcher, peer_state,          clock,
+                                slots.data(), journal,    diagnostics_endpoint};
+    services::DiagnosticsService diagnostics{port,
+                                             peer_state,
+                                             dispatcher,
+                                             journal,
+                                             clock,
+                                             {metrics, this},
+                                             {serial_event, nullptr},
+                                             peer_endpoint,
+                                             ble_endpoint,
+                                             mission_computer};
     OwnerTask peer_owner{peers, "peers", 5, 50, 4096};
     OwnerTask diagnostic_owner{diagnostics, "diagnostics", 3, 50, 4096};
     struct alignas(TcpEndpoint) EndpointStorage {
@@ -116,7 +125,7 @@ services::Metrics metrics(void *context) {
     if (host_free)
         m.minimum_stack = std::min<uint32_t>(m.minimum_stack, host_free);
 #endif
-    m.stale = r.peers.stale_messages();
+    m.stale = r.peer_state.stale_messages();
     m.diagnostic_drops = r.diagnostics.drops() + system_log_drops();
     return m;
 }
@@ -176,9 +185,9 @@ void start_device() {
                              (unsigned long)sample.minimum_heap, (unsigned long)sample.largest_block,
                              (unsigned long)sample.minimum_stack, (unsigned long)sample.stale,
                              (unsigned long)sample.diagnostic_drops);
-                    for (size_t i = 0; i < device.peers.capacity(); ++i) {
+                    for (size_t i = 0; i < device.peer_state.capacity(); ++i) {
                         services::PeerRecord peer{};
-                        if (device.peers.peer(i, peer))
+                        if (device.peer_state.peer(i, peer))
                             ESP_LOGI("Validation",
                                      "peer=%012llX boot=%016llX state=%s slot=%lu gen=%lu seen=%llu",
                                      (unsigned long long)peer.descriptor.device,

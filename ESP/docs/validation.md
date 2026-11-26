@@ -16,13 +16,18 @@ cmake -S ESP/tests/host -B build/asan -DRAVEN_SANITIZER=address -DCMAKE_BUILD_TY
 cmake -S ESP/tests/host -B build/tsan -DRAVEN_SANITIZER=thread -DCMAKE_BUILD_TYPE=Debug
 ```
 
-One CTest executable contains 17 scenarios: golden codec/invalid input; Critical admission,
+The `communication_test` CTest executable contains 17 scenarios: golden codec/invalid input; Critical admission,
 coalescing, and ticks under flood; fragmented/coalesced framing and absolute timeout;
 handshake/keepalive/probe; admission/Written/semantic deadline; response before Written; stale
 RX/TX after reuse; concurrent close versus commit; lost keepalive and ACK with full TX; bounded
 journal; parser/reconnect; send tickets, I/O leases, and 200 reuses; six peers/duplicate identity;
 at most one optional diagnostic; SDK Log V1/V2 fragments; transport-independent PacketWriter;
 full logs text.
+
+The `service_contract_test` executable adds three scenarios: independent State snapshots
+across close/reuse, concurrent snapshot consistency, and DiagnosticsService using State
+and Dispatcher without a PeerService implementation dependency. The latter covers an
+unbound route, full admission, and a separately executed probe/result exchange.
 
 `RAVEN_TCP_BOARD_PROBE=y` in a **node test build** replaces the ordinary composition with a test client.
 `RAVEN_VALIDATION_MONITOR=y` adds UART snapshots every 10 seconds and an additional task with a
@@ -53,6 +58,9 @@ to the actual connections. It does not define the application's board list. The 
 after the final recovery is checked separately.
 
 ## MC memory budget, capacity=6
+
+This table records the profile used for the four-board hardware run. The later role/State
+correction adds 16 bytes to Runtime; its compiler measurements are recorded below.
 
 `sizeof` values were measured by the Xtensa compiler and confirmed by the ESP32-S3 startup log.
 References/queues are not dynamically allocated for each message. Runtime owns the slot tables.
@@ -178,3 +186,24 @@ new errors after link recovery. Serial ports were released.
 
 Earlier "25/25 on Arm Demo" reports do not validate this implementation. No real iOS client or UART
 transport is present in this stage; their operation is not claimed.
+
+## Role and State correction verification
+
+The correction after `382a2df` restores semantic Activity/Service bases and removes
+DiagnosticsService's dependency on PeerService. See
+[ADR-004](adr/0004-explicit-roles-and-peer-state.md) for scope and preserved contracts.
+
+- Windows host: both CTest executables pass, covering the original 17 communication
+  scenarios and three new service-contract scenarios; compilation uses warnings as errors.
+- ESP-IDF 6.1.1: MC ESP32-S3 and node ESP32 build successfully. Local image sizes are
+  1 055 088 and 827 504 bytes, respectively.
+- The MC ELF reports Runtime at 32 256 bytes versus the earlier 32 240 (+16).
+  Message remains 88 and Inbox 1 520 bytes. The peer-state mutex is moved, not duplicated;
+  task counts, configured stacks, queue capacities, and wire payloads do not change.
+- Applying only that static-memory delta to the earlier conservative reserve yields
+  33 336 bytes (33 352 − 16). This is a derived budget adjustment, not a new heap measurement.
+- The immutable architecture baseline and normative specification are unchanged.
+
+No board was reflashed for this correction. Earlier hardware soak, BLE, heap, and
+stack results above remain evidence for the preceding firmware, not a fresh hardware
+run of these changes. Whole-PR architectural compliance is a separate review.

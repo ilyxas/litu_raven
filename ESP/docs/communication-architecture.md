@@ -9,10 +9,10 @@ does not by itself establish compliance with that specification.
 
 | Layer | Purpose |
 |---|---|
-| `raven_core` | Component, Inbox, Executor, local Dispatcher; no ICD, TCP, or ESP-IDF |
+| `raven_core` | Component, Activity/Service role declarations, Inbox, Executor, local Dispatcher; no ICD, TCP, or ESP-IDF |
 | `raven_icd` | Typed device language and binary codec; no sockets or RTOS |
 | `raven_comms` | Session/ReplyRoute, local admission boundary, TX component, length framing |
-| `raven_services` | PeerService: handshake, readiness, keepalive, deadlines; DiagnosticsService: queries and events |
+| `raven_services` | Peer/Diagnostics services, independent PeerState, and shared peer command/result contracts |
 | `raven_diagnostics` | Bounded journal and SDK log assembly; no I/O |
 | `raven_platform` | OwnerTask, TCP RX/manager/channel, Wi-Fi, monotonic clock |
 | `raven_ble` | GATT transport and MC's service text console |
@@ -27,7 +27,7 @@ flowchart LR
         Port --> D[Local Dispatcher]
         D --> PI[PeerService Inbox · Ordered]
         PI --> PE[OwnerTask + Executor]
-        PE --> Peer[PeerService: state / deadlines / response]
+        PE --> Peer[PeerService: behavior / deadlines / response]
         Peer --> Port
         Port -->|ACK/NACK| D
         D --> TI[TX Inbox · Ordered]
@@ -42,9 +42,30 @@ flowchart LR
         Manager[TcpManager: connect / accept / shutdown / close] --> Session
         Peer --> Journal[Event journal]
         Journal --> Diag[DiagnosticsService]
+        Peer -->|controlled updates| State[PeerState: canonical snapshots]
+        State -->|read-only| Diag
+        Diag -->|ProbeRequest| D
+        Session -.->|snapshot validity| State
         Diag --> BLE[BLE TX / Console]
     end
 ```
+
+`Activity` and `Service` are empty semantic bases over `Component`. They declare
+which architectural role contract applies, without adding fields, tasks, or runtime
+dispatch behavior. PeerService and DiagnosticsService inherit Service. TCP TX and
+BLE TX are adapters and remain Components; there is no concrete Activity in this composition.
+Executor and OwnerTask continue to host any Component.
+
+Composition constructs PeerState separately. PeerService receives its mutable write
+contract; DiagnosticsService and metrics readers use snapshots without a PeerService
+reference. The store owns the peer records' synchronization, immutable local descriptor,
+and stale counter. Pending exchanges and deadlines remain with PeerService.
+PeerState reads only session validity; it performs no I/O, dispatch, or policy work.
+
+Manual probes use the shared ProbeRequest/ProbeResult payloads and Dispatcher routes
+configured by composition. DiagnosticsService does not call PeerService or post to
+its Inbox directly. The rationale and preserved contracts are in
+[ADR-004](adr/0004-explicit-roles-and-peer-state.md).
 
 RX never waits for service execution. `Dispatcher.deliver()` returns an admission result
 synchronously; PeerService executes the accepted message in its OwnerTask. ACK and semantic
@@ -89,8 +110,9 @@ active calls to finish, the RX parser to reset, and PeerService to retire, then 
 abortive linger. Old unacknowledged TCP data does not retain closed-connection resources. Partial
 frames are not carried over, and queues are not replayed into a new connection.
 
-Generation validation and the current Peer State commit occur under the same Session::Guard.
-Lock order is Peer State → Session → Inbox; no I/O occurs under the Session lock. This protects
+Generation validation and the current Peer State commit occur under the same Session::Guard,
+with PeerState::Write already held. Lock order is PeerState → Session → Inbox; no I/O occurs under
+the Session lock. This protects
 current identity/readiness as well as old responses. Stale queued RX is discarded; old TX, late
 finish/close, and old send tokens cannot modify a new session. Closure is observable state and
 cannot be lost because an event queue is full.

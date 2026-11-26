@@ -12,11 +12,10 @@ constexpr uint64_t heartbeat_interval_ms = 1000;
 constexpr uint64_t passive_hello_timeout_ms = 5000;
 constexpr unsigned hello_attempt_limit = 3;
 } // namespace
-PeerService::PeerService(CommunicationPort &port, runtime::Dispatcher &dispatcher,
-                         const icd::DeviceDescriptor &local, Clock clock, PeerSlot *slots, PeerRecord *peers,
-                         size_t peer_capacity, diagnostics::Journal &journal, uint8_t endpoint)
-    : port_(port), dispatcher_(dispatcher), local_(local), clock_(clock), slots_(slots), peers_(peers),
-      peer_capacity_(peer_capacity), journal_(journal), diagnostics_endpoint_(endpoint) {
+PeerService::PeerService(CommunicationPort &port, runtime::Dispatcher &dispatcher, PeerState &state,
+                         Clock clock, PeerSlot *slots, diagnostics::Journal &journal, uint8_t endpoint)
+    : port_(port), dispatcher_(dispatcher), state_(state), clock_(clock), slots_(slots), journal_(journal),
+      diagnostics_endpoint_(endpoint) {
     for (uint16_t id = uint16_t(icd::Type::HelloRequest); id <= uint16_t(icd::Type::Receipt); ++id) {
         const bool ok = inbox.subscribe(incoming(icd::Type(id)), sizeof(Inbound), runtime::Policy::Ordered);
         assert(ok);
@@ -26,139 +25,63 @@ PeerService::PeerService(CommunicationPort &port, runtime::Dispatcher &dispatche
     assert(ok);
     (void)ok;
 }
-const char *name(PeerStatus s) {
-    switch (s) {
-    case PeerStatus::Unknown:
-        return "unknown";
-    case PeerStatus::Handshaking:
-        return "handshaking";
-    case PeerStatus::NotReady:
-        return "not-ready";
-    case PeerStatus::Ready:
-        return "ready";
-    case PeerStatus::Disconnected:
-        return "disconnected";
-    }
-    return "invalid";
-}
-const char *name(Outcome o) {
-    switch (o) {
-    case Outcome::Pending:
-        return "pending";
-    case Outcome::Succeeded:
-        return "success";
-    case Outcome::LocalRejected:
-        return "local-rejected";
-    case Outcome::TransportLost:
-        return "transport-lost";
-    case Outcome::SendDeadline:
-        return "send-deadline";
-    case Outcome::RemoteNack:
-        return "remote-nack";
-    case Outcome::ResponseTimeout:
-        return "response-timeout";
-    case Outcome::Rejected:
-        return "rejected";
-    }
-    return "invalid";
-}
-const char *name(Failure f) {
-    switch (f) {
-    case Failure::None:
-        return "none";
-    case Failure::TransportLost:
-        return "transport-lost";
-    case Failure::Protocol:
-        return "protocol";
-    case Failure::LocalFull:
-        return "local-full";
-    case Failure::SendDeadline:
-        return "send-deadline";
-    case Failure::WriteError:
-        return "write-error";
-    case Failure::ResponseTimeout:
-        return "response-timeout";
-    case Failure::RemoteNack:
-        return "remote-nack";
-    case Failure::IdentityConflict:
-        return "identity-conflict";
-    }
-    return "invalid";
-}
-bool PeerService::peer(size_t index, PeerRecord &value) const {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    if (index >= peer_capacity_ || !peers_[index].descriptor.device)
-        return false;
-    value = peers_[index];
-    if (value.status != PeerStatus::Disconnected) {
-        auto *session = port_.session(value.route);
-        if (!session || !session->active(value.route))
-            value.status = PeerStatus::Disconnected;
-    }
-    return true;
-}
-uint32_t PeerService::stale_messages() const {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    return stale_;
-}
-runtime::Delivery PeerService::probe(icd::DeviceId id, uint32_t generation, uint32_t request) {
-    return inbox.post(
-        runtime::Message::make(probe_request_id, request, ProbeRequest{id, generation, request}));
-}
-bool PeerService::register_peer(PeerSlot &slot, const icd::DeviceDescriptor &descriptor, uint64_t now) {
-    if (!descriptor.device || descriptor.device == local_.device || descriptor.protocol != icd::version ||
-        descriptor.readiness == icd::Readiness::Rejected)
+bool PeerService::register_peer(PeerState::Write &state, PeerSlot &slot,
+                                const icd::DeviceDescriptor &descriptor, uint64_t now) {
+    if (!descriptor.device || descriptor.device == state_.identity().device ||
+        descriptor.protocol != icd::version || descriptor.readiness == icd::Readiness::Rejected)
         return false;
     // Identity of an established transport binding is immutable.
     if (slot.established) {
-        const auto &old = peers_[slot.peer_index].descriptor;
+        const auto &old = state.record(slot.peer_index).descriptor;
         return old.device == descriptor.device && old.boot == descriptor.boot;
     }
     size_t selected = SIZE_MAX;
-    for (size_t i = 0; i < peer_capacity_; ++i) {
-        if (peers_[i].descriptor.device != descriptor.device)
+    for (size_t i = 0; i < state.capacity(); ++i) {
+        if (state.record(i).descriptor.device != descriptor.device)
             continue;
-        if (peers_[i].status != PeerStatus::Disconnected && peers_[i].route != slot.route)
+        if (state.record(i).status != PeerStatus::Disconnected && state.record(i).route != slot.route)
             return false;
         selected = i;
         break;
     }
     if (selected == SIZE_MAX) {
-        for (size_t i = 0; i < peer_capacity_; ++i) {
-            if (!peers_[i].descriptor.device) {
+        for (size_t i = 0; i < state.capacity(); ++i) {
+            if (!state.record(i).descriptor.device) {
                 selected = i;
                 break;
             }
-            if (peers_[i].status == PeerStatus::Disconnected &&
-                (selected == SIZE_MAX || peers_[i].changed_at < peers_[selected].changed_at))
+            if (state.record(i).status == PeerStatus::Disconnected &&
+                (selected == SIZE_MAX || state.record(i).changed_at < state.record(selected).changed_at))
                 selected = i;
         }
     }
     if (selected == SIZE_MAX)
         return false;
-    peers_[selected] = {descriptor, slot.route, now, now, PeerStatus::Handshaking, Failure::None};
+    state.record(selected) = {descriptor, slot.route, now, now, PeerStatus::Handshaking, Failure::None};
     slot.peer_index = selected;
     slot.established = true;
     slot.next_heartbeat = now + heartbeat_interval_ms;
-    readiness(slot, descriptor.readiness, descriptor.reason, now);
+    readiness(state, slot, descriptor.readiness, descriptor.reason, now);
     return true;
 }
-void PeerService::readiness(PeerSlot &slot, icd::Readiness ready, icd::Reason reason, uint64_t now) {
+void PeerService::readiness(PeerState::Write &state, PeerSlot &slot, icd::Readiness ready, icd::Reason reason,
+                            uint64_t now) {
     if (!slot.established)
         return;
-    auto &peer = peers_[slot.peer_index];
-    const auto state = ready == icd::Readiness::Ready ? PeerStatus::Ready : PeerStatus::NotReady;
+    auto &peer = state.record(slot.peer_index);
+    const auto status = ready == icd::Readiness::Ready ? PeerStatus::Ready : PeerStatus::NotReady;
     peer.last_seen = now;
     peer.descriptor.readiness = ready;
     peer.descriptor.reason = reason;
-    if (state == peer.status)
+    if (status == peer.status)
         return;
-    peer.status = state;
+    peer.status = status;
     peer.changed_at = now;
-    journal_.append(state == PeerStatus::Ready ? Event::PeerReady : Event::PeerNotReady, now,
-                    peer.descriptor.device, peer.descriptor.boot, name(state));
+    journal_.append(status == PeerStatus::Ready ? Event::PeerReady : Event::PeerNotReady, now,
+                    peer.descriptor.device, peer.descriptor.boot, name(status));
 }
-void PeerService::complete(PeerSlot &slot, PendingExchange &pending, Outcome result, uint64_t now) {
+void PeerService::complete(PeerState::Write &state, PeerSlot &slot, PendingExchange &pending, Outcome result,
+                           uint64_t now) {
     if (!pending.active)
         return;
     pending.active = false;
@@ -166,8 +89,8 @@ void PeerService::complete(PeerSlot &slot, PendingExchange &pending, Outcome res
     auto *session = port_.session(slot.route);
     if (session && pending.ticket)
         session->cancel(pending.ticket);
-    const auto id = slot.established ? peers_[slot.peer_index].descriptor.device : 0;
-    const auto boot = slot.established ? peers_[slot.peer_index].descriptor.boot : 0;
+    const auto id = slot.established ? state.record(slot.peer_index).descriptor.device : 0;
+    const auto boot = slot.established ? state.record(slot.peer_index).descriptor.boot : 0;
     if (pending.manual) {
         const ProbeResult reply{id, pending.has_written ? now - pending.first_written : 0,
                                 pending.console_generation, pending.console_request, result};
@@ -180,11 +103,11 @@ void PeerService::complete(PeerSlot &slot, PendingExchange &pending, Outcome res
         journal_.append(Event::ExchangeFailed, now, id, boot, name(result), 2);
     }
 }
-void PeerService::attempt(PeerSlot &slot, PendingExchange &pending, uint64_t now) {
+void PeerService::attempt(PeerState::Write &state, PeerSlot &slot, PendingExchange &pending, uint64_t now) {
     auto &session = port_.at(slot.route.slot);
     const auto ticket = session.reserve(slot.route, pending.request.exchange, pending.request.type, now);
     if (!ticket) {
-        complete(slot, pending, Outcome::LocalRejected, now);
+        complete(state, slot, pending, Outcome::LocalRejected, now);
         return;
     }
     pending.ticket = ticket;
@@ -194,12 +117,12 @@ void PeerService::attempt(PeerSlot &slot, PendingExchange &pending, uint64_t now
         session.cancel(ticket);
         session.release(ticket);
         pending.ticket = {};
-        complete(slot, pending, posted == Post::StaleRoute ? Outcome::TransportLost : Outcome::LocalRejected,
-                 now);
+        complete(state, slot, pending,
+                 posted == Post::StaleRoute ? Outcome::TransportLost : Outcome::LocalRejected, now);
     }
 }
-void PeerService::start_exchange(PeerSlot &slot, PendingExchange &pending, icd::Type type, uint64_t now,
-                                 const ProbeRequest *probe) {
+void PeerService::start_exchange(PeerState::Write &state, PeerSlot &slot, PendingExchange &pending,
+                                 icd::Type type, uint64_t now, const ProbeRequest *probe) {
     if (pending.active || pending.ticket)
         return;
     if (exchange_counter_ == UINT32_MAX) {
@@ -213,17 +136,18 @@ void PeerService::start_exchange(PeerSlot &slot, PendingExchange &pending, icd::
     pending.request.exchange = ++exchange_counter_;
     pending.request.requires_ack = type == icd::Type::HelloRequest;
     if (type == icd::Type::HelloRequest)
-        pending.request.body.set(icd::Hello{local_, now});
+        pending.request.body.set(icd::Hello{state_.identity(), now});
     else
-        pending.request.body.set(icd::Heartbeat{now, now, local_.reason, local_.readiness, 0});
+        pending.request.body.set(
+            icd::Heartbeat{now, now, state_.identity().reason, state_.identity().readiness, 0});
     if (probe) {
         pending.manual = true;
         pending.console_generation = probe->console_generation;
         pending.console_request = probe->request;
     }
-    attempt(slot, pending, now);
+    attempt(state, slot, pending, now);
 }
-void PeerService::advance(PeerSlot &slot, PendingExchange &p, uint64_t now) {
+void PeerService::advance(PeerState::Write &state, PeerSlot &slot, PendingExchange &p, uint64_t now) {
     auto &session = port_.at(slot.route.slot);
     if (p.ticket) {
         const auto progress = session.progress(p.ticket);
@@ -234,7 +158,7 @@ void PeerService::advance(PeerSlot &slot, PendingExchange &p, uint64_t now) {
             p.next_retry = p.first_written + hello_retry_ms;
         }
         if (progress.phase == SendPhase::Failed && p.active)
-            complete(slot, p,
+            complete(state, slot, p,
                      progress.reason == Failure::SendDeadline ? Outcome::SendDeadline
                                                               : Outcome::TransportLost,
                      now);
@@ -242,20 +166,20 @@ void PeerService::advance(PeerSlot &slot, PendingExchange &p, uint64_t now) {
             session.release(p.ticket);
             p.ticket = {};
         } else if (p.active && now >= progress.admitted + Session::local_send_budget_ms) {
-            complete(slot, p, Outcome::SendDeadline, now);
+            complete(state, slot, p, Outcome::SendDeadline, now);
             session.close(slot.route, Failure::SendDeadline);
         }
     }
     if (!p.active)
         return;
     if (p.has_written && now >= p.deadline) {
-        complete(slot, p, Outcome::ResponseTimeout, now);
+        complete(state, slot, p, Outcome::ResponseTimeout, now);
         return;
     }
     if (p.has_written && p.request.type == icd::Type::HelloRequest && !p.ticket &&
         p.attempts < hello_attempt_limit && now >= p.next_retry) {
         p.next_retry = p.first_written + uint64_t(p.attempts + 1) * hello_retry_ms;
-        attempt(slot, p, now);
+        attempt(state, slot, p, now);
     }
 }
 void PeerService::open_slot(PeerSlot &slot, SessionKey route, uint64_t now) {
@@ -266,13 +190,13 @@ void PeerService::open_slot(PeerSlot &slot, SessionKey route, uint64_t now) {
                   (unsigned long)route.generation);
     journal_.append(Event::LinkOpened, now, 0, 0, text);
 }
-void PeerService::close_slot(PeerSlot &slot, Failure failure, uint64_t now) {
+void PeerService::close_slot(PeerState::Write &state, PeerSlot &slot, Failure failure, uint64_t now) {
     for (auto &pending : slot.exchanges)
-        complete(slot, pending, Outcome::TransportLost, now);
+        complete(state, slot, pending, Outcome::TransportLost, now);
     icd::DeviceId id = 0;
     icd::BootId boot = 0;
     if (slot.established) {
-        auto &peer = peers_[slot.peer_index];
+        auto &peer = state.record(slot.peer_index);
         peer.status = PeerStatus::Disconnected;
         peer.failure = failure;
         peer.changed_at = now;
@@ -287,7 +211,7 @@ void PeerService::close_slot(PeerSlot &slot, Failure failure, uint64_t now) {
 }
 void PeerService::on_tick(uint64_t) {
     const auto now = clock_.now();
-    std::lock_guard<std::mutex> state(state_mutex_);
+    PeerState::Write state(state_);
     for (size_t i = 0; i < port_.count(); ++i) {
         auto &session = port_.at(i);
         auto snapshot = session.snapshot();
@@ -299,7 +223,7 @@ void PeerService::on_tick(uint64_t) {
                     slot = {};
                     slot.route = snapshot.key;
                 }
-                close_slot(slot, snapshot.failure, now);
+                close_slot(state, slot, snapshot.failure, now);
                 Session::Guard guard(session);
                 if (guard.state.key == snapshot.key && guard.state.phase == Phase::Closing)
                     guard.state.peer_retired = true;
@@ -315,7 +239,7 @@ void PeerService::on_tick(uint64_t) {
             open_slot(slot, snapshot.key, now);
         }
         for (auto &pending : slot.exchanges)
-            advance(slot, pending, now);
+            advance(state, slot, pending, now);
         auto &automatic = slot.exchanges[0];
         if (!automatic.active && automatic.outcome != Outcome::Succeeded) {
             const auto reason = automatic.outcome == Outcome::ResponseTimeout ? Failure::ResponseTimeout
@@ -328,28 +252,30 @@ void PeerService::on_tick(uint64_t) {
             continue;
         }
         if (!slot.established) {
-            if (local_.role == icd::Role::MissionComputer && !automatic.active && !automatic.ticket)
-                start_exchange(slot, automatic, icd::Type::HelloRequest, now);
-            else if (local_.role == icd::Role::Node && now - snapshot.opened_at >= passive_hello_timeout_ms)
+            if (state_.identity().role == icd::Role::MissionComputer && !automatic.active &&
+                !automatic.ticket)
+                start_exchange(state, slot, automatic, icd::Type::HelloRequest, now);
+            else if (state_.identity().role == icd::Role::Node &&
+                     now - snapshot.opened_at >= passive_hello_timeout_ms)
                 session.close(slot.route, Failure::ResponseTimeout);
         } else if (!automatic.active && !automatic.ticket && now >= slot.next_heartbeat) {
-            start_exchange(slot, automatic, icd::Type::KeepAliveRequest, now);
+            start_exchange(state, slot, automatic, icd::Type::KeepAliveRequest, now);
         }
     }
 }
 void PeerService::on_message(const runtime::Message &message, uint64_t) {
     const auto now = clock_.now();
-    std::lock_guard<std::mutex> state(state_mutex_);
+    PeerState::Write state(state_);
     if (message.id == probe_request_id) {
         ProbeRequest probe{};
         if (!message.read(probe))
             return;
         for (size_t i = 0; i < port_.count(); ++i) {
             auto &slot = slots_[i];
-            if (!slot.established || peers_[slot.peer_index].descriptor.device != probe.device ||
+            if (!slot.established || state.record(slot.peer_index).descriptor.device != probe.device ||
                 slot.exchanges[1].active || slot.exchanges[1].ticket || !port_.at(i).active(slot.route))
                 continue;
-            start_exchange(slot, slot.exchanges[1], icd::Type::KeepAliveRequest, now, &probe);
+            start_exchange(state, slot, slot.exchanges[1], icd::Type::KeepAliveRequest, now, &probe);
             return;
         }
         const ProbeResult reply{probe.device, 0, probe.console_generation, probe.request,
@@ -372,7 +298,7 @@ void PeerService::on_message(const runtime::Message &message, uint64_t) {
     {
         Session::Guard guard(*session);
         if (!guard.active(input.route)) {
-            ++stale_;
+            state.note_stale();
             return;
         }
         if (slot.route != input.route)
@@ -380,10 +306,10 @@ void PeerService::on_message(const runtime::Message &message, uint64_t) {
         const auto type = icd::Type(message.id - incoming_base);
         if (type == icd::Type::HelloRequest) {
             const auto hello = input.body.get<icd::Hello>();
-            const auto accepted = register_peer(slot, hello.device, now);
+            const auto accepted = register_peer(state, slot, hello.device, now);
             response.type = icd::Type::HelloResponse;
             response.exchange = message.request;
-            icd::Hello response_body{local_, now};
+            icd::Hello response_body{state_.identity(), now};
             reply = true;
             if (!accepted) {
                 response_body.device.readiness = icd::Readiness::Rejected;
@@ -400,9 +326,9 @@ void PeerService::on_message(const runtime::Message &message, uint64_t) {
                 response.type = icd::Type::KeepAliveResponse;
                 response.exchange = message.request;
                 response.body.set(icd::Heartbeat{input.body.get<icd::Heartbeat>().origin_ms, now,
-                                                 local_.reason, local_.readiness, 0});
+                                                 state_.identity().reason, state_.identity().readiness, 0});
                 reply = true;
-                peers_[slot.peer_index].last_seen = now;
+                state.record(slot.peer_index).last_seen = now;
             }
         } else {
             PendingExchange *match = nullptr;
@@ -418,7 +344,7 @@ void PeerService::on_message(const runtime::Message &message, uint64_t) {
                     match = &p;
             }
             if (!match || (match->has_written && now >= match->deadline)) {
-                ++stale_;
+                state.note_stale();
                 return;
             }
             if (type == icd::Type::Receipt) {
@@ -429,7 +355,7 @@ void PeerService::on_message(const runtime::Message &message, uint64_t) {
             } else if (type == icd::Type::HelloResponse) {
                 completed = match;
                 const auto hello = input.body.get<icd::Hello>();
-                if (!register_peer(slot, hello.device, now)) {
+                if (!register_peer(state, slot, hello.device, now)) {
                     outcome = Outcome::Rejected;
                     reject = true;
                     journal_.append(Event::IdentityConflict, now, hello.device.device, hello.device.boot,
@@ -438,10 +364,10 @@ void PeerService::on_message(const runtime::Message &message, uint64_t) {
             } else if (type == icd::Type::KeepAliveResponse && slot.established) {
                 const auto heartbeat = input.body.get<icd::Heartbeat>();
                 if (heartbeat.origin_ms != match->request.body.get<icd::Heartbeat>().origin_ms) {
-                    ++stale_;
+                    state.note_stale();
                     return;
                 }
-                readiness(slot, heartbeat.readiness, heartbeat.reason, now);
+                readiness(state, slot, heartbeat.readiness, heartbeat.reason, now);
                 completed = match;
             }
             if (completed) {
@@ -453,7 +379,7 @@ void PeerService::on_message(const runtime::Message &message, uint64_t) {
         }
     }
     if (completed)
-        complete(slot, *completed, outcome, now);
+        complete(state, slot, *completed, outcome, now);
     if (reply && port_.send(input.route, response) != Post::Accepted)
         session->close(input.route, Failure::LocalFull);
     // A rejected Hello must be able to leave the TX inbox. The initiator closes

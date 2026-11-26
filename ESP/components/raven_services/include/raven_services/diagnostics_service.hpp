@@ -1,5 +1,8 @@
 #pragma once
-#include "raven_services/peer_service.hpp"
+#include "raven_comms/tx_component.hpp"
+#include "raven_core/service.hpp"
+#include "raven_diagnostics/journal.hpp"
+#include "raven_services/peer_state.hpp"
 #include <array>
 #include <atomic>
 namespace raven::services {
@@ -59,11 +62,12 @@ class ConsoleParser {
 };
 // Console queries and event publication run below peer execution priority.
 // Long replies advance one line per tick instead of filling TX with a dump.
-class DiagnosticsService final : public runtime::Component {
+class DiagnosticsService final : public runtime::Service {
   public:
-    DiagnosticsService(comms::CommunicationPort &port, PeerService &peers, runtime::Dispatcher &dispatcher,
-                       diagnostics::Journal &journal, comms::Clock clock, MetricsSource metrics,
-                       EventOutput output, uint8_t ble_endpoint, bool mission_computer);
+    DiagnosticsService(comms::CommunicationPort &port, const PeerState &peers,
+                       runtime::Dispatcher &dispatcher, diagnostics::Journal &journal, comms::Clock clock,
+                       MetricsSource metrics, EventOutput output, uint8_t peer_endpoint, uint8_t ble_endpoint,
+                       bool mission_computer);
     void on_message(const runtime::Message &message, uint64_t now) override;
     void on_tick(uint64_t now) override;
     uint32_t drops() const { return drops_.load(); }
@@ -72,13 +76,13 @@ class DiagnosticsService final : public runtime::Component {
     bool line(uint32_t generation, const char *format, ...);
     void next_line();
     comms::CommunicationPort &port_;
-    PeerService &peers_;
+    const PeerState &peers_;
     runtime::Dispatcher &dispatcher_;
     diagnostics::Journal &journal_;
     comms::Clock clock_;
     MetricsSource metrics_;
     EventOutput output_;
-    uint8_t ble_endpoint_;
+    uint8_t peer_endpoint_, ble_endpoint_;
     bool mission_computer_;
     ConsoleRequest reply_{};
     diagnostics::Record log_reply_{};
