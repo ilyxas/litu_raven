@@ -1,168 +1,169 @@
-# LITU / Raven: контекст для продолжения работы
+# LITU / Raven: Continuation Context
 
-Обновлено: 26 ноября 2026 года.
+Updated: November 26, 2026.
 
-Это точка входа после длинного архитектурного обсуждения. Документ сохраняет смысл договорённостей, а не стенограмму и не самостоятельное задание на реализацию. Текущий запрос пользователя определяет работу; новые явные указания могут менять зафиксированные здесь решения.
+This is the entry point after an extended architectural discussion. It preserves the meaning of agreements, not a transcript or an independent implementation assignment. The current user request determines the work; new explicit instructions may change decisions recorded here.
 
-Нормативные роли, контракты и инварианты определены в [архитектурной спецификации Raven](../ESP/docs/architecture.md). Handoff передаёт контекст и не заменяет спецификацию; исторические сведения ниже нужно отличать от действующих норм и текущего состояния реализации.
+Normative roles, contracts, and invariants are defined in the [Raven architectural specification](../ESP/docs/architecture.md). This handoff transfers context and does not replace the specification; distinguish historical information below from current requirements and implementation status.
 
-## Сотрудничество и способ постановки задач
+## Collaboration and task framing
 
-Илья думает вслух, перебирает примеры и через них описывает общий архитектурный замысел. Следует извлекать инварианты и проверять их на других предметных областях. Пример становится конкретным требованием реализации только тогда, когда это действительно следует из задачи.
+Ilya thinks aloud, explores examples, and uses them to explain architectural intent. Extract invariants and test them against other domains. An example becomes a concrete implementation requirement only when the task actually calls for it.
 
-У Ильи практический опыт архитектуры систем реального времени, mission computer, асинхронных входов, телеметрии, симуляции и работы с железом. Обсуждение ведётся на уровне коллег. Можно и нужно возражать по существу: опыт пользователя не делает любое предложение бесспорным, а агент должен приносить собственное техническое суждение.
+Ilya has practical experience with real-time system architecture, mission computers, asynchronous input, telemetry, simulation, and hardware. Discuss the work as colleagues. Challenge proposals on their merits: the user's experience does not make every suggestion unquestionable, and the agent should contribute its own technical judgment.
 
-Пожелания пользователя: «просто будь налегке и смело принимай решения»; существующую основу разрешено пересматривать. Это свобода инженерного выбора внутри задачи, а не поручение переписывать весь проект или запускать внешние действия при каждом новом чате. Пользователь ожидает самостоятельной реализации и проверки, когда дал задачу на выполнение.
+The user's preference is to keep the process light and make decisions confidently; the existing foundation may be reconsidered. This is engineering discretion within the task, not an instruction to rewrite the whole project or start external actions in every new chat. When implementation is requested, the user expects independent execution and verification.
 
-Полезный ход рассуждения: пример → требуемое свойство → возможные решения → выбранное решение с причиной → проверка. Не превращай интерпретацию агента в установленный контракт. Не тормози работу уточнениями, ответ на которые можно найти в коде или разумно выбрать самостоятельно.
+A useful reasoning sequence is: example → required property → candidate solutions → chosen solution and rationale → verification. Do not turn an agent's interpretation into an established contract. Do not stall with questions whose answers can be found in code or chosen reasonably.
 
-Контекст общения включает разные голоса и визуальные образы моделей. Тон может быть живым, тёплым и неформальным; важнее уверенное совместное мышление, чем формальная манера интервью.
+The conversational context includes different model voices and visual personas. A lively, warm, informal tone is acceptable; confident collaboration matters more than a formal interview style.
 
-## Что означает архитектурный замысел
+## Architectural intent
 
-Raven — система поведения и взаимодействия подсистем; ESP32/FreeRTOS — её текущая платформа исполнения. Несколько операций могут одновременно оставаться активными. Роли и контракты должны сохранять смысл с реальным устройством, mock-провайдером или симуляцией.
+Raven is a system for behavior and subsystem interaction; ESP32/FreeRTOS is its current execution platform. Several operations can remain active concurrently. Roles and contracts must retain their meaning with a physical device, mock provider, or simulation.
 
-| Пример из разговора | Требуемое свойство |
+| Discussion example | Required property |
 |---|---|
-| Левая рука поднимается, правая поворачивает кисть | Независимые операции и цели могут выполняться одновременно |
-| Духовка разогревается, турбина запускается | Исполнитель владеет длительным процессом и способен реагировать на предусмотренные команды во время него |
-| Устройство предоставляет только читаемые статусы | Продвижение операции возможно без callbacks, через периодическое обслуживание |
-| Выгрузка фотографий по TCP | Детали выполнения, повторы и сроки скрыты за API исполнителя |
-| Engine cut / HALT | Известные системе критические сообщения получают приоритет; смысл реакции принадлежит получателю |
+| The left arm rises while the right wrist turns | Independent operations and goals may execute concurrently |
+| An oven heats up or a turbine starts | The executor owns a long-running process and can react to its defined commands during that process |
+| A device exposes only readable status | An operation can advance without callbacks through periodic servicing |
+| Uploading photos over TCP | Execution details, retries, and deadlines are hidden behind the executor's API |
+| Engine cut / HALT | Known critical messages receive priority; the recipient owns the response semantics |
 
-Количество рук не задаёт количество RTOS-задач. Пример с турбиной не требует проектировать турбину. Общая архитектура не должна заимствовать частные правила предметной области без причины.
+The number of arms does not define the number of RTOS tasks. A turbine example does not require designing a turbine. The general architecture must not inherit domain-specific rules without a reason.
 
-### Роли и ответственность
+### Roles and responsibilities
 
-- Activity оркестрирует операции и сценарий. Она доверяет контрактам исполнителей, наблюдает их состояния и решает, что делать дальше.
-- Service владеет своей подсистемой и её операциями: принятой целью, прогрессом, реакцией на новые сообщения, собственными сроками и итогом.
-- State предоставляет согласованное состояние для других компонентов. Внутренние детали, не нужные другим, не обязаны становиться глобальными данными.
-- Адаптеры переводят внешнее представление в известные внутренние контракты. Прикладной смысл не должен зависеть от того, пришло сообщение по TCP, из mock или от другого компонента.
-- Корректность и управляемость Service проверяются при разработке. Не переносить его ответственность на оркестратор, исходя из предположения о произвольно некорректном исполнителе. Реальные нарушения контракта всё равно нужно выявлять и исправлять.
+- Activity orchestrates operations and scenarios. It trusts executor contracts, observes their states, and decides what to do next.
+- Service owns its subsystem and operations: the accepted goal, progress, reactions to new messages, its own deadlines, and the outcome.
+- State provides consistent state for other components. Internal details that others do not need are not required to become global data.
+- Adapters translate external representations into known internal contracts. Application meaning must not depend on whether a message arrived through TCP, a mock, or another component.
+- Service correctness and controllability are verified during development. Do not transfer its responsibility to the orchestrator by assuming an arbitrarily incorrect executor. Actual contract violations still need to be found and corrected.
 
-### Доставка, ACK/NACK и исполнение — разные уровни
+### Delivery, ACK/NACK, and execution are separate levels
 
-Для обсуждаемого протокола ACK/NACK подтверждает результат приёма/внутренней доставки сообщения. Разбор, проверка и попытка dispatch дают немедленный локальный результат; шлюз формирует подтверждение без ожидания выполнения `handle_message()`, завершения операции или следующего tick.
+For the protocol under discussion, ACK/NACK confirms the outcome of message admission/internal delivery. Parsing, validation, and a dispatch attempt yield an immediate local result; the gateway forms a receipt without waiting for `handle_message()`, operation completion, or the next tick.
 
-Сам ACK не означает, что движение началось или закончилось. Прикладной ACK/NACK Raven также не следует путать с ACK транспортного TCP. Название подтверждения само по себе не требует блокирующего сетевого API: синхронным здесь является результат локальной попытки доставки.
+ACK itself does not mean movement has started or finished. Raven application ACK/NACK must also be distinguished from TCP transport ACK. The name of the acknowledgment does not require a blocking network API: the synchronous part here is the local delivery attempt's result.
 
-Исполнение имеет отдельный наблюдаемый статус. Инициатор может опрашивать его; обязательный push окончательного результата или дополнительный ACK получения результата не были приняты как универсальное требование. Сервис обязан довести принятое конечное задание до предусмотренного итогового состояния согласно собственному контракту. Длительная сессия управления остаётся активной до предусмотренного условия завершения.
+Execution has a separate observable status. An initiator may poll it; a mandatory final-result push or additional acknowledgment of result receipt was not adopted as a universal requirement. A service must bring an accepted finite task to a defined terminal state according to its own contract. A long-running control session remains active until its defined termination condition.
 
-Оркестратор не угадывает таймаут руки или TCP-выгрузки и не объявляет чужую операцию неудачной вместо её владельца. Разрыв связи с наблюдателем и неудача исполнения также не являются одним состоянием.
+The orchestrator does not guess an arm's or TCP upload's timeout and does not declare another owner's operation failed on its behalf. Losing a connection to an observer and execution failure are also different states.
 
-### Tick, callbacks и новые сообщения
+### Ticks, callbacks, and new messages
 
-`on_tick()` — общий периодический вход в поведение владельца. Он может читать статус устройства, отслеживать прогресс, проверять внутренние deadlines и продвигать выполнение. Он не сводится только к watchdog или только к polling.
+`on_tick()` is a general periodic entry into owner behavior. It may read device status, track progress, check internal deadlines, and advance execution. It is not limited to a watchdog or to polling.
 
-Возможны устройства с callbacks, с чтением статуса и с ограниченными синхронными вызовами. Конкретный Service обеспечивает свой контракт управляемости. Длительность физической операции и длительность одного вызова обработчика — разные понятия; не навязывать всем операциям общий короткий срок исполнения.
+Devices may provide callbacks, readable status, or bounded synchronous calls. Each Service provides its own controllability contract. Physical-operation duration and individual handler-call duration are different concepts; do not impose one short execution deadline on all operations.
 
-Callback передаёт данные или уведомление владельцу; изменение поведения остаётся в предусмотренном контексте владельца. Activity может на своём tick читать статусы сервисов без дублирования их внутренних сроков.
+A callback passes data or a notification to the owner; behavioral changes remain in the designated owner context. An Activity may read service status on its tick without duplicating the services' internal deadlines.
 
-### Критические сообщения и замена целей
+### Critical messages and target replacement
 
-Критичность задаётся известными контрактами/IDs сообщений и учитывается на входе и при маршрутизации. Сообщение обрабатывает предусмотренный получатель. Только он знает, что остановить, что отменить и какие действия выполнить вслед за этим; навигация не должна знать правила охлаждения чужой подсистемы.
+Known message contracts/IDs determine criticality, which is respected at input and routing. The designated recipient handles the message. Only that recipient knows what to stop, cancel, and do next; navigation must not need to know another subsystem's cooling rules.
 
-HALT в обсуждении — пример такого сообщения. Архитектура не устанавливает для всех получателей обязательный Reset, запрет до перезапуска или универсальную аппаратную реакцию. Накопление, приоритет и подтверждение доставки относятся к runtime/протоколу; предметная реакция относится к владельцу.
+HALT is an example of such a message in this discussion. The architecture does not impose a mandatory Reset, a lockout until reboot, or a universal hardware reaction on every recipient. Buffering, priority, and delivery acknowledgment belong to the runtime/protocol; the domain reaction belongs to the owner.
 
-Новая цель меняет текущее намерение: для движения не нужно заканчивать прежний манёвр перед её применением. Согласованы обе формы API: конечные операции с итогом, включая вытеснение, и продолжающееся управление с обновляемой целью, как джойстик. Конкретные правила совместимости целей принадлежат контракту сервиса.
+A new target changes the current intent: movement need not finish the previous maneuver before applying it. Both API forms were agreed: finite operations with an outcome, including supersession, and continuing control with an updated target, such as a joystick. Specific target-compatibility rules belong to the service contract.
 
-## Текущий этап: коммуникация устройств
+## Current stage: device communication
 
-PR #3 слит в `dev_rnd` (base текущей работы `02dd622`). Новый этап реализован в отдельном
-worktree `D:/Git/litu_raven_communication`, ветка `codex/device-communication`; исходная общая копия
-не переключалась. [PR #4](https://github.com/ilyxas/litu_raven/pull/4) адресован `dev_rnd`.
-Итоговые проверки и ресурсные замеры — в [validation.md](../ESP/docs/validation.md); текущий статус
-PR и ветки всегда сверять по Git/GitHub.
+PR #3 was merged into `dev_rnd` (the current work's base is `02dd622`). The new stage was implemented
+in the separate worktree `D:/Git/litu_raven_communication`, branch `codex/device-communication`;
+the original shared checkout was not switched. [PR #4](https://github.com/ilyxas/litu_raven/pull/4)
+targets `dev_rnd`. Final verification and resource measurements are in
+[validation.md](../ESP/docs/validation.md); always check current PR/branch status in Git/GitHub.
 
-Согласовано: два ESP-IDF apps MC/node с общими Raven-компонентами; device-oriented ICD; отдельные
-TCP RX и TX, один writer на socket; локальный Dispatcher; PeerService владеет handshake/keepalive,
-retry и семантическими сроками. Session generation защищает также актуальный Peer State, не только
-ответы. Условия таймаутов и политика перегрузки описаны в текущей документации.
+Agreed: two ESP-IDF apps, MC/node, with shared Raven components; a device-oriented ICD; separate
+TCP RX and TX, one writer per socket; a local Dispatcher; PeerService owns handshake/keepalive,
+retries, and semantic deadlines. Session generation protects current Peer State as well as
+responses. Timeout conditions and overload policy are described in the current documentation.
 
-Количество плат не определяет архитектуру. Шесть сессий — текущий ресурсный профиль MC, физическая
-проверка согласована на четырёх ESP. Новая плата получает factory-MAC Device ID и случайный Boot ID;
-не нужны новые классы/списки адресов. Камера не инициализируется. BLE остаётся на MC как сервисная
-консоль с событиями, без поточной телеметрии и Arm-команд.
+Board count does not define the architecture. Six sessions are MC's current resource profile;
+physical validation was agreed for four ESPs. A new board receives a factory-MAC Device ID and a
+random Boot ID; no new classes/address lists are needed. The camera is not initialized. BLE remains
+on MC as an event-based service console, without streaming telemetry or Arm commands.
 
-Очистка сознательно удаляет Arm Demo, старые TCP/JSON gateways, FC/MSP capability и её boot mode,
-устаревшие слои и vendored cJSON. iOS-код не меняется, прежняя совместимость ESP с ним не сохраняется.
-Дальнейшая iOS-интеграция, MSP, UART и camera services — отдельные задачи под актуальные границы.
+Cleanup deliberately removes Arm Demo, old TCP/JSON gateways, the FC/MSP capability and its boot
+mode, obsolete layers, and vendored cJSON. iOS code is unchanged; previous ESP compatibility with it
+is not preserved. Future iOS integration, MSP, UART, and camera services are separate tasks under
+the current boundaries.
 
-Inbox Ordered/Latest/Critical и scheduling Executor сохраняются. Critical — safety-critical
-coalescing по контракту; ACK и диагностика туда не попадают. Размер payload и локальной адресации
-увеличен под реальные typed envelopes и состав MC, с проверкой ресурсов. Новая архитектурная сущность
-допустима, когда упрощает ясный контракт; запрета пересматривать ядро нет.
+Inbox Ordered/Latest/Critical and Executor scheduling are preserved. Critical is safety-critical
+coalescing according to contract; ACK and diagnostics do not use it. Payload size and local
+addressing were increased for the actual typed envelopes and MC composition, with resource checks.
+A new architectural entity is allowed when it simplifies a clear contract; core revision is not forbidden.
 
-Проверка этапа 26 ноября: 17 host-сценариев, ASan/UBSan/TSan и три firmware target в CI; реальный
-TCP suite на шесть сессий с подключённым BLE; четыре физические платы с независимыми перезапусками
-и 30-минутной стабильной выдержкой. На COM4/5/6/7 оставлены обычные прошивки без тестового monitor/probe,
-после их записи подтверждён общий handshake. Порты освобождены; актуальные COM всегда проверять заново.
+November 26 stage verification: 17 host scenarios, ASan/UBSan/TSan, and three firmware targets in CI;
+a real six-session TCP suite with BLE connected; four physical boards with independent restarts and
+a stable 30-minute soak. Ordinary firmware without test monitor/probe was left on COM4/5/6/7, and
+the shared handshake was confirmed after flashing. Ports were released; always recheck current COM assignments.
 
-## История завершённых этапов (до 26 ноября)
+## Completed-stage history (before November 26)
 
-Ниже сохранены прежние результаты и размещение классов. Это история; команды/пути старого демо
-не являются инструкцией для текущей прошивки.
+Earlier results and class placement are retained below as history; old demo commands/paths are
+not instructions for the current firmware.
 
-Это отдельное R&D-направление от `main`. Пользователь поручил сначала закоммитить architecture/embedded skills, затем создать `dev_rnd` и рабочую ветку от неё, реализовать и проверить прототип, открыть PR в `dev_rnd`.
+This is an R&D direction separate from `main`. The user requested committing the architecture/embedded skills first, then creating `dev_rnd` and a working branch from it, implementing and testing the prototype, and opening a PR into `dev_rnd`.
 
-Проверенные этапы Git и ревью на 22 ноября 2026 года:
+Verified Git and review milestones as of November 22, 2026:
 
-- База R&D: `dev_rnd`; ветка создана после коммита skills `18fa13f`.
-- Ветка реализации прототипа: `codex/raven-execution-prototype`.
-- Реализация прототипа: `e4a0702` — `Implement owner execution runtime and dual-arm RND prototype`.
-- Исправления по независимому ревью: `2d80a9f` — `Fix child result retention, command reconnects, and retarget timing`.
-- [PR #2](https://github.com/ilyxas/litu_raven/pull/2) **слит в `dev_rnd` 22 ноября 2026 года**, merge-коммит `e998135`. Слияние подтверждено состоянием PR и `origin/dev_rnd`; это отдельный факт от завершения ревью.
-- Инструкции агента и исходный handoff добавлены коммитом `1a6b686`. Этот коммит и последующие изменения документации не входят в merge `e998135`; их включение в `dev_rnd` нужно проверять отдельно.
-- Эти сведения — ориентир, а не текущая истина навсегда. Перед продолжением проверь ветки, изменения, PR и фактические результаты проверок.
+- R&D base: `dev_rnd`; the branch was created after skills commit `18fa13f`.
+- Prototype implementation branch: `codex/raven-execution-prototype`.
+- Prototype implementation: `e4a0702` — `Implement owner execution runtime and dual-arm RND prototype`.
+- Independent-review fixes: `2d80a9f` — `Fix child result retention, command reconnects, and retarget timing`.
+- [PR #2](https://github.com/ilyxas/litu_raven/pull/2) **was merged into `dev_rnd` on November 22, 2026**, merge commit `e998135`. The merge was confirmed by PR state and `origin/dev_rnd`; it is a separate fact from completion of review.
+- Agent instructions and the initial handoff were added in `1a6b686`. That commit and later documentation changes are not part of merge `e998135`; their inclusion in `dev_rnd` must be checked separately.
+- These facts are reference points, not permanent current truth. Before continuing, check branches, changes, PRs, and actual verification results.
 
-После PR #2 пользователь поручил распределить классы по архитектурным компонентам и поднять BLE для готового приложения Bluetooth Serial Connect. Реализация закоммичена в `f7e54ae`, открыт [PR #3](https://github.com/ilyxas/litu_raven/pull/3) в `dev_rnd`. Рабочая копия — отдельный worktree `D:/Git/litu_raven_ble`, ветка `codex/runtime-components-ble` от `origin/dev_rnd`; общая копия `D:/Git/litu_raven` не переключалась. Коммиты handoff `1a6b686`/`f752f4b` перенесены в эту ветку как `67ea59d`/`c0d5414`.
+After PR #2, the user requested distributing classes among architectural components and enabling BLE for the existing Bluetooth Serial Connect app. The implementation was committed in `f7e54ae`; [PR #3](https://github.com/ilyxas/litu_raven/pull/3) was opened into `dev_rnd`. Work used the separate worktree `D:/Git/litu_raven_ble`, branch `codex/runtime-components-ble` from `origin/dev_rnd`; the shared `D:/Git/litu_raven` checkout was not switched. Handoff commits `1a6b686`/`f752f4b` were carried into this branch as `67ea59d`/`c0d5414`.
 
-Компоненты `raven_runtime`, `raven_rnd`, `raven_rnd_esp` удалены: ядро теперь в `raven_core`, состояние в `raven_state`, руки и сенсорный пример в `raven_services`, сценарий в `raven_activities`, OwnerTask/драйверы/радио/сокеты в `raven_platform`, TCP/BLE-адаптеры в `raven_gateways`. Общие сообщения и интерфейс привода находятся в `raven_contracts`; композиция — `main/demo_runtime.hpp` и `demo_bootstrap.cpp`; тесты — `tests`. Старые Kconfig-имена `RAVEN_RND_*` сохранены для совместимости. Две виртуальные руки и конкретные ёмкости/периоды остаются проверочным примером, а не универсальными требованиями.
+Components `raven_runtime`, `raven_rnd`, and `raven_rnd_esp` were removed: the core moved to `raven_core`, state to `raven_state`, arms and the sensor example to `raven_services`, the scenario to `raven_activities`, OwnerTask/drivers/radio/sockets to `raven_platform`, and TCP/BLE adapters to `raven_gateways`. Shared messages and the driver interface are in `raven_contracts`; composition is in `main/demo_runtime.hpp` and `demo_bootstrap.cpp`; tests are in `tests`. Old `RAVEN_RND_*` Kconfig names were retained for compatibility. Two virtual arms and concrete capacities/periods remain verification examples, not universal requirements.
 
-BLE-профиль приложения подтверждён документацией автора: FFE0/FFE1, строки с LF, консоль `C:...`, ответы/виджеты D/L/I/G. ESP объявляет `Raven-BLE`. Доставка/ACK и исполнение по-прежнему разделены; BLE reconnect не отменяет уже доставленные операции. Новая таблица `partitions.csv` оставляет NVS/PHY на старых адресах и даёт приложению `0x1f0000` байт: Wi-Fi+BLE превышают прежний 1 МиБ. Дефолтные сборки включают NimBLE и native USB console, а boot-тесты запускаются только при включённом `RAVEN_RND_SELF_TEST`. При включённых тестах BLE запускается после них.
+The app's BLE profile was confirmed by its author's documentation: FFE0/FFE1, LF-terminated lines, console `C:...`, and D/L/I/G responses/widgets. ESP advertises `Raven-BLE`. Delivery/ACK and execution remain separate; BLE reconnect does not cancel already delivered operations. The new `partitions.csv` keeps NVS/PHY at their old addresses and gives the application `0x1f0000` bytes: Wi-Fi+BLE exceeds the former 1 MiB. Default builds enable NimBLE and native USB console; boot tests run only when `RAVEN_RND_SELF_TEST` is enabled. When tests are enabled, BLE starts after them.
 
-ESP подключён; пользователь разрешал сборку, загрузку и проверку в рамках задачи реализации. Фактические порт, конфигурацию и состояние платы нужно проверять перед работой. Прочтение этого документа само по себе не является поручением прошивать устройство или продолжать старую задачу.
+ESP is connected; the user authorized build, flash, and verification as part of the implementation task. Check the actual port, configuration, and board state before working. Reading this document alone does not authorize flashing a device or continuing an old task.
 
-iOS — источник будущих запросов/джойстика и потребитель состояния для сцены. Пользователь отдельно уточнил: существующий iOS-код сейчас не трогать, это отдельная задача. Текущую интеграционную границу учитывать. MSP менее важен и служит примером поверх архитектуры.
+iOS is a source of future requests/joystick input and a consumer of state for the scene. The user explicitly stated that existing iOS code must not be changed now; it is a separate task. Account for the current integration boundary. MSP is less important and serves as an example built on the architecture.
 
-В боковом чате выполнены [первое независимое ревью](https://github.com/ilyxas/litu_raven/pull/2#pullrequestreview-6009722052) и [повторное ревью исправлений](https://github.com/ilyxas/litu_raven/pull/2#pullrequestreview-6009856677). Найденные дефекты — потеря дочернего результата при вытеснении истории, блокировка новых TCP-сессий старым клиентом и потеря времени движения при retarget — исправлены в `2d80a9f`; все три обсуждения закрыты. В проверенном изменении новых замечаний, требующих исправления, не найдено. Техническое обоснование и результаты повторной проверки сохранены в PR. При последующих ревью по-прежнему проверять общие контракты и границу между ядром и предметным демо.
+A side chat performed the [first independent review](https://github.com/ilyxas/litu_raven/pull/2#pullrequestreview-6009722052) and [follow-up review of fixes](https://github.com/ilyxas/litu_raven/pull/2#pullrequestreview-6009856677). The findings—loss of a child result when history was evicted, an old client blocking new TCP sessions, and lost movement time on retarget—were fixed in `2d80a9f`; all three threads were resolved. No further findings requiring correction were identified in the reviewed change. Technical rationale and repeat-verification results are retained in the PR. Future reviews should continue checking general contracts and the boundary between the core and the domain demo.
 
-## Где искать техническую истину
+## Where to find technical references
 
-- [Текущие приложения и команды сборки](../ESP/README.md).
-- [Архитектурная спецификация Raven](../ESP/docs/architecture.md).
-- [Неизменяемый baseline из 02dd622](../ESP/docs/architecture-baseline-02dd622.md).
-- [Проверка полноты спецификации](../ESP/docs/architecture-coverage.md).
-- [Коммуникационная реализация, Session и поколения](../ESP/docs/communication-architecture.md).
-- [ICD и временная семантика](../ESP/docs/communication.md).
-- [BLE-консоль](../ESP/docs/ble-console.md).
-- [Ресурсы и проверки](../ESP/docs/validation.md).
-- [ADR-003: коммуникация и очистка](../ESP/docs/adr/0003-device-communication.md).
-- [Исторический ADR-002: компоненты и BLE](../ESP/docs/adr/0002-role-components-and-ble-console.md).
-- [ADR-001: доставка и исполнение](../ESP/docs/adr/0001-delivery-and-execution.md).
-- [Направление iOS](../IOS/docs/architecture_note_draft.md).
-- [PR #1](https://github.com/ilyxas/litu_raven/pull/1): удалённые NavigationActivity, PilotInputService и telemetry показывают прежний замысел. Их код доступен в истории до merge; это материал для понимания, а не обязательный шаблон.
+- [Current applications and build commands](../ESP/README.md).
+- [Raven architectural specification](../ESP/docs/architecture.md).
+- [Immutable baseline from 02dd622](../ESP/docs/architecture-baseline-02dd622.md).
+- [Specification completeness review](../ESP/docs/architecture-coverage.md).
+- [Communication implementation, Session, and generations](../ESP/docs/communication-architecture.md).
+- [ICD and timing semantics](../ESP/docs/communication.md).
+- [BLE console](../ESP/docs/ble-console.md).
+- [Resources and verification](../ESP/docs/validation.md).
+- [ADR-003: communication and cleanup](../ESP/docs/adr/0003-device-communication.md).
+- [Historical ADR-002: components and BLE](../ESP/docs/adr/0002-role-components-and-ble-console.md).
+- [ADR-001: delivery and execution](../ESP/docs/adr/0001-delivery-and-execution.md).
+- [iOS direction](../IOS/docs/architecture_note_draft.md).
+- [PR #1](https://github.com/ilyxas/litu_raven/pull/1): removed NavigationActivity, PilotInputService, and telemetry illustrate earlier intent. Their code is available in pre-merge history; it is material for understanding, not a mandatory template.
 
-Сводка здесь не заменяет чтение изменяемого кода. Подтверждённая проверка реализации `2d80a9f` проводилась в задаче исправления замечаний: сборка ESP-IDF 6.1.1, прошивка ESP32-S3 и **20/20 PASS на плате** — 18 детерминированных сценариев и два TCP-теста через lwIP loopback. До исправлений четыре новые регрессии воспроизводили дефекты; прежние 15 тестов проходили. После исправлений замена TCP-сессии занимала 12–13 мс, а дополнительные 15 секунд наблюдения не показали перезапусков или watchdog. Это результат предыдущего аппаратного прогона, а не утверждение о новом запуске при каждом чтении handoff.
+This summary does not replace reading the code being changed. Confirmed verification of `2d80a9f` occurred during review-fix work: ESP-IDF 6.1.1 build, ESP32-S3 flash, and **20/20 PASS on the board**—18 deterministic scenarios and two TCP tests over lwIP loopback. Before the fixes, four new regressions reproduced the defects while the previous 15 tests passed. After the fixes, TCP-session replacement took 12–13 ms, and another 15 seconds of observation showed no restarts or watchdog. These are results from an earlier hardware run, not a claim of a new run whenever the handoff is read.
 
-Повторное независимое ревью проверило код, тесты и сохранённые логи; самостоятельно повторило `git diff --check` и проверку синтаксиса Python, но не запускало C++/MCU-тесты заново. Native host C++-тесты, реальные Wi-Fi/iPhone-сеансы и истечение keepalive при потере радиосвязи пока не проверены. Разделяй эти уровни подтверждения в последующих отчётах.
+The follow-up independent review examined code, tests, and saved logs; it independently repeated `git diff --check` and Python syntax checks but did not rerun C++/MCU tests. Native host C++ tests, real Wi-Fi/iPhone sessions, and keepalive expiration after radio loss had not yet been checked at that stage. Keep these evidence levels separate in subsequent reports.
 
-## Дополнительный контекст самостоятельности агента
+## Additional context on agent autonomy
 
-В совместном проекте [VideoRouter API Studio](https://github.com/ilyxas/videorouterApiUI) модель самостоятельно реализовала использование Grok CLI как провайдера Image/Video-карточек, а Илья пользуется готовым инструментом. Это пример ожидаемой инициативы: понять цель, выбрать механизм, реализовать, проверить и довести до использования.
+In the shared [VideoRouter API Studio](https://github.com/ilyxas/videorouterApiUI) project, the model independently implemented Grok CLI as the provider for Image/Video cards, and Ilya uses the resulting tool. This illustrates the expected initiative: understand the goal, choose a mechanism, implement, verify, and deliver something usable.
 
-По просмотренному коду адаптер задаёт агенту рамки одной карточки, получает поток событий и импортирует результат; детали исполнения скрыты от остального workflow. [Контракт построения workflow](https://github.com/ilyxas/videorouterApiUI/blob/main/contracts/workflow/README.md) допускает обычный язык пользователя и возлагает построение графа на агента. Эти ссылки дают контекст сотрудничества; переносить данный проект или запускать его генерации ради работы над Raven не требуется.
+In the examined code, the adapter defines the scope of one card for the agent, receives an event stream, and imports the result; execution details are hidden from the rest of the workflow. The [workflow construction contract](https://github.com/ilyxas/videorouterApiUI/blob/main/contracts/workflow/README.md) accepts ordinary user language and assigns graph construction to the agent. These references provide collaboration context; there is no need to port that project or run its generators for Raven work.
 
-## Как поддерживать эту точку входа
+## Maintaining this entry point
 
-`AGENTS.md` содержит короткие рабочие правила и направляет сюда. Здесь сохраняются устойчивые договорённости, карта документации и явно датированное состояние. Технические детали обновляются в документах соответствующей подсистемы, без параллельных противоречивых описаний.
+`AGENTS.md` contains concise working rules and points here. This document preserves stable agreements, the documentation map, and explicitly dated status. Technical details are maintained in the corresponding subsystem documents without parallel contradictory descriptions.
 
-После нового существенного решения исправляй актуальный текст, отличая решение пользователя от выбранной агентом реализации. Не добавляй стенограмму, личные контакты, секреты или отдельный отчёт на каждый запуск. Для нового чата в другом проекте этот handoff можно передать явно как контекст; его ветки и ограничения относятся именно к `litu_raven`.
+After a significant new decision, update the relevant text while distinguishing the user's decision from the implementation chosen by the agent. Do not add a transcript, personal contacts, secrets, or a separate report for every run. This handoff may be explicitly supplied as context to a new chat in another project; its branches and constraints apply specifically to `litu_raven`.
 
-## Проверка текущей реорганизации и BLE (22 ноября 2026)
+## Component reorganization and BLE verification (November 22, 2026)
 
-ESP32-S3 v0.2, 16 МБ flash, сейчас доступен на COM4 через встроенный USB-Serial/JTAG. По разрешению пользователя закрыты процессы ESP-IDF Monitor, державшие COM4. В новой рабочей копии собрана и прошита ESP-IDF 6.1.1 прошивка; на плате прошли **25/25**: 23 детерминированных сценария и два lwIP loopback-теста. Все 20 прежних проверок сохранены. TCP takeover в итоговом прогоне занял 13–14 мс, slow consumer вызвал реальный send failure без остановки сервисов. После тестов наблюдались BLE_READY и 15 секунд без fault/reset/watchdog; free heap около 135 КБ, минимум 102 КБ при совместном запуске с тестовой задачей. Проверочная сборка: 1 077 424 байта, 47% свободного места в app-разделе. Минимум свободного стека: сервисы >3 КБ, Activity 2956, TCP 3284, telemetry 2304; после старта BLE gateway >4 КБ, NimBLE host 2336 байт.
+ESP32-S3 v0.2, 16 MB flash, was available on COM4 through built-in USB-Serial/JTAG. With user authorization, the ESP-IDF Monitor processes holding COM4 were closed. ESP-IDF 6.1.1 firmware was built and flashed from the new worktree; **25/25** passed on the board: 23 deterministic scenarios and two lwIP loopback tests. All 20 earlier checks were retained. TCP takeover in the final run took 13–14 ms; a slow consumer caused a real send failure without stopping services. After the tests, BLE_READY and 15 seconds without fault/reset/watchdog were observed; free heap was about 135 KB, minimum 102 KB while the test task was also running. Verification build: 1 077 424 bytes, 47% of the app partition free. Minimum free stack: services >3 KB, Activity 2956, TCP 3284, telemetry 2304; after BLE startup, gateway >4 KB and NimBLE host 2336 bytes.
 
-Альтернативный FC boot mode без BLE также собран (без прошивки). Host C++ tests на компьютере пока не запускались; код этих сценариев проверен на ESP. Пользователь подтвердил подключение через другую BLE-аппликацию, затем и через исходный Bluetooth Serial Connect. ESP зарегистрировала GAP connection, подписку FFE1 и исходящие уведомления; минимум свободного host-стека после соединения 1656 байт. Пользователь отметил шум в логе: добавлены обновления виджетов только при изменении и `watch off/on`, отключён INFO-лог каждой NimBLE notification. Итоговый прогон 25/25 включает проверку тихих readouts: повтор одинакового состояния молчит, `watch off` сохраняет ответы на команды, `watch on` возвращает свежие показания. Логи текущего прогона находятся в ignored build новой рабочей копии.
+The alternate FC boot mode without BLE was also built but not flashed. Host C++ tests had not yet run on the computer; these scenarios ran on ESP. The user confirmed connection through another BLE app, then through the original Bluetooth Serial Connect app. ESP recorded a GAP connection, FFE1 subscription, and outbound notifications; minimum free host stack after connection was 1656 bytes. The user reported noisy logs: widget updates were limited to changes, `watch off/on` was added, and INFO logging for every NimBLE notification was disabled. The final 25/25 run includes quiet-readout checks: repeated identical state is silent, `watch off` preserves command responses, and `watch on` restores fresh readings. Run logs are in the new worktree's ignored build directory.
 
-На плате оставлена итоговая обычная прошивка с выключенными boot-тестами: 1 062 656 байт, 48% app-раздела свободно. После проверенной записи flash выполнено 20 секунд наблюдения: BLE_READY на 417 мс, тестовые команды не запускаются, fault/reset/watchdog нет. Free heap 136 704 байта, minimum 132 364, largest block 90 112; свободный стек BLE gateway 4788, host 2336 байт до нового подключения. Итоговый FC-вариант повторно собран без BLE. Serial-порт после проверки освобождён. Для тихой консоли `watch off`, для панели `watch on`; после reconnect настройка возвращается в on.
+The board was left with ordinary final firmware and boot tests disabled: 1 062 656 bytes, 48% of the app partition free. Verified flash writing was followed by 20 seconds of observation: BLE_READY at 417 ms, no test commands, and no fault/reset/watchdog. Free heap was 136 704 bytes, minimum 132 364, largest block 90 112; BLE gateway free stack was 4788 and host free stack 2336 bytes before a new connection. The final FC variant was built again without BLE. The serial port was released. Use `watch off` for a quiet console and `watch on` for the panel; reconnect restores on.

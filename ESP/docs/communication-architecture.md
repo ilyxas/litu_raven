@@ -1,33 +1,33 @@
-# Архитектура коммуникации Raven
+# Raven Communication Architecture
 
-Техническое описание конкретной реализации межустройственного обмена.
-Общие роли, обязательные контракты и инварианты определены в
-[архитектурной спецификации Raven](architecture.md). Описание устройства кода
-само по себе не подтверждает его соответствие этой спецификации.
+Technical description of the concrete inter-device communication implementation.
+General roles, mandatory contracts, and invariants are defined in the
+[Raven architectural specification](architecture.md). Describing the code's structure
+does not by itself establish compliance with that specification.
 
-## Границы
+## Boundaries
 
-| Слой | Назначение |
+| Layer | Purpose |
 |---|---|
-| `raven_core` | Component, Inbox, Executor, локальный Dispatcher; без ICD, TCP и ESP-IDF |
-| `raven_icd` | Типизированный язык устройств и бинарный codec; без сокетов и RTOS |
-| `raven_comms` | Session/ReplyRoute, граница локального admission, TX-компонента, length framing |
-| `raven_services` | PeerService: handshake, готовность, keepalive, сроки; DiagnosticsService: запросы и события |
-| `raven_diagnostics` | Ограниченный журнал и сборка SDK-логов; без I/O |
-| `raven_platform` | OwnerTask, TCP RX/manager/channel, Wi-Fi, монотонные часы |
-| `raven_ble` | GATT transport и сервисная текстовая консоль MC |
-| `raven_app` | Композиция, lifetime, ресурсы, локальные endpoint IDs и identity |
+| `raven_core` | Component, Inbox, Executor, local Dispatcher; no ICD, TCP, or ESP-IDF |
+| `raven_icd` | Typed device language and binary codec; no sockets or RTOS |
+| `raven_comms` | Session/ReplyRoute, local admission boundary, TX component, length framing |
+| `raven_services` | PeerService: handshake, readiness, keepalive, deadlines; DiagnosticsService: queries and events |
+| `raven_diagnostics` | Bounded journal and SDK log assembly; no I/O |
+| `raven_platform` | OwnerTask, TCP RX/manager/channel, Wi-Fi, monotonic clock |
+| `raven_ble` | GATT transport and MC's service text console |
+| `raven_app` | Composition, lifetimes, resources, local endpoint IDs, and identity |
 
 ```mermaid
 flowchart LR
-    subgraph Device[Одно устройство]
+    subgraph Device[One device]
         Socket[TCP socket] --> RX[RX task: recv + LengthFrameReader]
         RX --> Decode[ICD decode]
         Decode --> Port[CommunicationPort: route + admission]
-        Port --> D[Локальный Dispatcher]
+        Port --> D[Local Dispatcher]
         D --> PI[PeerService Inbox · Ordered]
         PI --> PE[OwnerTask + Executor]
-        PE --> Peer[PeerService: состояние / сроки / ответ]
+        PE --> Peer[PeerService: state / deadlines / response]
         Peer --> Port
         Port -->|ACK/NACK| D
         D --> TI[TX Inbox · Ordered]
@@ -40,41 +40,41 @@ flowchart LR
         Session -.-> Writer
         Session -.-> Peer
         Manager[TcpManager: connect / accept / shutdown / close] --> Session
-        Peer --> Journal[Журнал событий]
+        Peer --> Journal[Event journal]
         Journal --> Diag[DiagnosticsService]
         Diag --> BLE[BLE TX / Console]
     end
 ```
 
-RX никогда не ожидает исполнения сервиса. `Dispatcher.deliver()` синхронно возвращает результат
-admission; PeerService исполняет принятое сообщение в своём OwnerTask. ACK и семантический ответ
-могут прийти в любом порядке. Сокет имеет одного writer; его RX и TX работают независимо.
+RX never waits for service execution. `Dispatcher.deliver()` returns an admission result
+synchronously; PeerService executes the accepted message in its OwnerTask. ACK and semantic
+response may arrive in either order. A socket has one writer; its RX and TX operate independently.
 
-`CommunicationPort` — адаптер конкретного ICD к локальным сообщениям. Он не добавляет очередь и
-не делает Dispatcher удалённым. Привязка peer/diagnostics endpoint задаётся при композиции.
-`PacketWriter` получает уже закодированный пакет: TCP добавляет длину, будущий UART может выбрать
-свой framing, CRC и способ чтения. Для UART всё равно понадобятся платформенный RX/writer и правила
-открытия/закрытия логической сессии; готовый UART здесь не заявляется.
+`CommunicationPort` adapts a specific ICD to local messages. It does not add a queue or make
+Dispatcher remote. Composition assigns the peer/diagnostics endpoint binding.
+`PacketWriter` receives an already encoded packet: TCP adds a length, while a future UART may
+choose its own framing, CRC, and read mechanism. UART will still require platform RX/writer
+implementations and logical session open/close rules; a working UART is not claimed here.
 
-## Inbox и исполнение
+## Inbox and execution
 
-Модель Inbox сохранена: восемь FIFO-элементов и восемь подписок. `Ordered` сохраняет сообщения,
-`Latest` и `Critical` используют отдельные зарезервированные coalescing-слоты по ID. Critical имеет
-safety-critical смысл и заменяет предыдущее значение того же контракта. ACK/NACK, диагностика и
-handshake не используют Critical. `Critical Ordered` не добавлен: у текущего ICD нет события,
-требующего одновременно critical-приоритета и сохранения каждой отдельной записи.
+The Inbox model is preserved: eight FIFO entries and eight subscriptions. `Ordered` preserves messages;
+`Latest` and `Critical` use separate reserved coalescing slots per ID. Critical has safety-critical
+meaning and replaces the previous value of the same contract. ACK/NACK, diagnostics, and handshake
+do not use Critical. `Critical Ordered` was not added: the current ICD has no event requiring both
+critical priority and retention of every individual record.
 
-Executor обрабатывает ограниченную critical-порцию, due tick, затем critical либо одно обычное
-сообщение. Поступление сообщений не вытесняет tick бесконечно. Период привязан к монотонной сетке;
-пропущенные интервалы не проигрываются пачкой. OwnerTask ограничивает непрерывный drain восемью
-шагами и отдаёт CPU. Обработчики конкретного владельца последовательны. Ограниченный TCP write
-может занять до 100 ms; это бюджет платформенного writer, а не универсальный срок операции сервиса.
+Executor handles a bounded critical batch, a due tick, then a critical or one ordinary message.
+Incoming messages cannot indefinitely displace ticks. The period follows a monotonic schedule;
+missed intervals are not replayed in a burst. OwnerTask limits continuous draining to eight steps
+before yielding CPU. Each owner's handlers are sequential. A bounded TCP write may take up to
+100 ms; that is the platform writer's budget, not a universal service-operation deadline.
 
-## Session и поколения
+## Session and generations
 
-`ReplyRoute = {slot, generation}` — локальная ссылка на текущее подключение, не wire-адрес и не ID
-устройства. Generation монотонно растёт при переиспользовании слота. При исчерпании счётчика слот
-становится Exhausted; wrap в старое поколение запрещён.
+`ReplyRoute = {slot, generation}` is a local reference to a current connection, not a wire address
+or Device ID. Generation increases monotonically when a slot is reused. If the counter is exhausted,
+the slot becomes Exhausted; wrapping into an old generation is forbidden.
 
 ```mermaid
 stateDiagram-v2
@@ -84,30 +84,31 @@ stateDiagram-v2
     Vacant --> Exhausted: generation exhausted
 ```
 
-Закрытие немедленно запрещает новый admission и новые I/O leases. Manager делает `shutdown`, ждёт
-завершения активных вызовов, сброса RX parser и retire от PeerService, затем закрывает fd с abortive
-linger. Старые неподтверждённые TCP-данные не удерживают ресурсы закрытого соединения. Незавершённые
-кадры не переносятся, очереди не replay-ятся в новое подключение.
+Closure immediately prohibits new admission and new I/O leases. Manager calls `shutdown`, waits for
+active calls to finish, the RX parser to reset, and PeerService to retire, then closes the fd with
+abortive linger. Old unacknowledged TCP data does not retain closed-connection resources. Partial
+frames are not carried over, and queues are not replayed into a new connection.
 
-Проверка поколения и commit актуального Peer State выполняются под одним Session::Guard.
-Порядок блокировок: Peer State → Session → Inbox; I/O под Session lock нет. Это защищает не только
-старые ответы, но и актуальные identity/readiness. Старые queued RX отбрасываются; old TX, поздний
-finish/close и старые send tokens не могут изменить новую сессию. Закрытие — наблюдаемое состояние,
-его нельзя потерять из-за заполненной очереди событий.
+Generation validation and the current Peer State commit occur under the same Session::Guard.
+Lock order is Peer State → Session → Inbox; no I/O occurs under the Session lock. This protects
+current identity/readiness as well as old responses. Stale queued RX is discarded; old TX, late
+finish/close, and old send tokens cannot modify a new session. Closure is observable state and
+cannot be lost because an event queue is full.
 
-Два bounded SendRecord на сессию нужны для собственного keepalive/handshake и ручного `ping`.
-Это наблюдение за локальной отправкой, не новый TransactionManager. Семантические retries и
-deadlines принадлежат PeerService. Другой исполнитель вправе иметь другой контракт и сроки.
+Two bounded SendRecord entries per session support the service's own keepalive/handshake and manual
+`ping`. They observe local transmission; they are not a new TransactionManager. Semantic retries
+and deadlines belong to PeerService. Another executor may define different contracts and deadlines.
 
-## Идентичность и масштабирование
+## Identity and scaling
 
-Device ID — 48-bit factory MAC в 64-bit поле; Boot ID — случайные 64 bit при старте после инициализации
-радио. Role/capabilities/readiness передаются в Hello. Подключения не привязаны к COM-портам и спискам
-MAC. Уже связанная identity не меняется внутри сессии; второй активный peer с тем же Device ID
-отклоняется без takeover. Реестр хранит `2 × capacity` записей, вытеснять можно только offline-записи.
+Device ID is a 48-bit factory MAC in a 64-bit field; Boot ID is a random 64-bit value generated at
+startup after radio initialization. Hello carries role/capabilities/readiness. Connections are not
+bound to COM ports or MAC lists. A bound identity does not change within a session; a second active
+peer with the same Device ID is rejected without takeover. The registry holds `2 × capacity`
+records; only offline records may be evicted.
 
-Число физических плат не зашито в архитектуру. Текущий MC-профиль выделяет шесть пар RX/TX задач,
-шесть TX Inbox, один PeerService и один журнал. Изменение ёмкости — конфигурация и проверка ресурсов,
-а не новый класс на каждую плату. Пределы конкретной сборки (AP, сокеты, 16 локальных endpoint IDs)
-явные. Десятки соединений могут потребовать другого размещения задач и транспорта; обещания вместить
-их в тот же ESP32-S3 с теми же RAM и Wi-Fi ограничениями здесь нет.
+The physical board count is not embedded in the architecture. The current MC profile allocates six
+RX/TX task pairs, six TX Inboxes, one PeerService, and one journal. Changing capacity means configuring
+and verifying resources, not adding a class for each board. Build-specific limits (AP, sockets,
+16 local endpoint IDs) are explicit. Dozens of connections may require different task placement or
+transport; this document does not promise they fit on the same ESP32-S3 with the same RAM and Wi-Fi limits.

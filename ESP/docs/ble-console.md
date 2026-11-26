@@ -1,39 +1,40 @@
-# Сервисная BLE-консоль MC
+# MC Service BLE Console
 
-MC объявляет `Raven-BLE`. Используется BLE GATT, совместимый с HM-10-профилем:
-service `FFE0`, характеристика `FFE1`: Read, Write, Write Without Response, Notify.
-Это прежний совместимый профиль [Bluetooth Serial Connect](https://bluetooth.henhen1227.com/wire-protocol.html).
-Нужна подписка на уведомления перед отправкой команд. Версия BLE 5 в контроллере не задаёт формат команд.
+MC advertises `Raven-BLE`. It uses BLE GATT compatible with the HM-10 profile:
+service `FFE0`, characteristic `FFE1`: Read, Write, Write Without Response, Notify.
+This is the existing compatible [Bluetooth Serial Connect](https://bluetooth.henhen1227.com/wire-protocol.html) profile.
+Subscribe to notifications before sending commands. The controller's BLE 5 version does not define the command format.
 
-В Console отправляй строку с LF. Допустимы `help\n` и обёртка приложения `C:help\n`; CR игнорируется.
-Ответы идут как `D0:<text>\n`, поэтому их видно в терминале и на Text Display D0.
+Send an LF-terminated line in Console. Both `help\n` and the app wrapper `C:help\n` are accepted; CR is ignored.
+Responses use `D0:<text>\n`, making them visible in the terminal and on Text Display D0.
 
-| Команда | Ответ |
+| Command | Response |
 |---|---|
-| `help` | Доступные команды |
-| `status` | Device/Boot ID MC, готовность, число Open-сессий |
-| `peers` | Реестр Ready/NotReady/Disconnected peers и поколения |
-| `peer <hex-id>` | Снимок identity, boot, role, версии, route, причины и времени последнего контакта |
-| `ping <hex-id>` | Admission ручного probe, затем самостоятельный семантический итог и RTT |
-| `stats` | Internal DMA heap/free/min/largest, минимум свободного стека, stale/drops |
-| `logs [count]` | Последние записи с метаданными и полным локальным текстом; по умолчанию 10 |
-| `watch off` | Отключить live-события, сохранив ответы на команды |
-| `watch on` | Смотреть новые события с текущего момента |
+| `help` | Available commands |
+| `status` | MC Device/Boot ID, readiness, number of Open sessions |
+| `peers` | Registry of Ready/NotReady/Disconnected peers and generations |
+| `peer <hex-id>` | Snapshot of identity, boot, role, version, route, reason, and last-contact time |
+| `ping <hex-id>` | Admission of a manual probe, followed by its independent semantic outcome and RTT |
+| `stats` | Internal DMA heap/free/min/largest, minimum free stack, stale/drops |
+| `logs [count]` | Recent records with metadata and full local text; default 10 |
+| `watch off` | Disable live events while retaining command responses |
+| `watch on` | Watch new events from the current moment onward |
 
-Например, `ping D0EF765CC8BC`. ID берётся из `peers`, не из примера документации.
-Градусы рук, pair/halt demo, joystick mappings и периодические панели телеметрии удалены.
+For example, `ping D0EF765CC8BC`. Obtain the ID from `peers`, not from the documentation example.
+Arm angles, pair/halt demo commands, joystick mappings, and periodic telemetry panels have been removed.
 
-При подключении watch включён. Здоровый keepalive молчит. В терминал приходят переходы соединения
-и готовности, ошибки, результат ручного ping и предупреждения SDK. События ограничены 4 строками/с
-и ждут, пока ответы/transport освободятся. Многострочные ответы выдаются по одной строке на tick,
-не заполняя очередь полным дампом. Один длинный запрос на поколение консоли; следующий получает busy.
+Watch is enabled on connection. Healthy keepalive is silent. The terminal receives connection and
+readiness transitions, errors, manual ping outcomes, and SDK warnings. Events are limited to
+4 lines/s and wait until responses/transport are available. Multiline responses emit one line per
+tick rather than filling the queue with a full dump. One long request is allowed per console
+generation; the next receives busy.
 
-Журнал фиксированного размера: 64 записи MC / 32 node. Идентичные соседние события в течение пяти
-секунд объединяются с repeat count. `logs` показывает счётчик; потеря старых записей обозначается gap.
-Live-строка компактная, полный локальный текст доступен через `logs`. Управляющие символы в выводе
-заменяются пробелами, чтобы текст ошибки не становился отдельной командой виджета.
+The journal has a fixed capacity: 64 MC records / 32 node records. Identical adjacent events within
+five seconds coalesce with a repeat count. `logs` shows the counter; loss of older records appears
+as a gap. Live lines are compact; full local text is available through `logs`. Control characters
+are replaced with spaces so that an error message cannot become a separate widget command.
 
-Длинная/некорректная входная строка отбрасывается целиком до LF. Reconnect сбрасывает partial input и
-не позволяет старому ответу попасть в новое поколение. Переполнение обязательного BLE ответа или
-потеря RX-фрагмента закрывает именно BLE connection. TCP peer exchange продолжает работать.
-BLE-консоль не владеет дедлайнами PeerService и не пересылает raw sockets.
+An overlong/invalid input line is discarded in full through LF. Reconnect clears partial input
+and prevents an old response from reaching a new generation. Overflow of a mandatory BLE response
+or loss of an RX fragment closes only the BLE connection. TCP peer exchange continues.
+The BLE console does not own PeerService deadlines and does not forward raw sockets.

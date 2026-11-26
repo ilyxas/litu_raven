@@ -1,9 +1,9 @@
-# Проверки и ресурсы
+# Verification and Resources
 
-Дата текущего этапа: 26 ноября 2026. Windows host, ESP-IDF 6.1.1. Число физических плат не является
-архитектурным лимитом. Ниже отдельно отмечаются portable tests, реальные TCP и физические устройства.
+Current stage date: November 26, 2026. Windows host, ESP-IDF 6.1.1. The physical board count is not
+an architectural limit. Portable tests, real TCP tests, and physical-device tests are distinguished below.
 
-## Воспроизведение
+## Reproduction
 
 Host suite:
 
@@ -11,166 +11,170 @@ Host suite:
 cmake -S ESP/tests/host -B build/host -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/host
 ctest --test-dir build/host --output-on-failure --timeout 30
-# Linux, отдельные каталоги для двух инструментов:
+# Linux: separate directories for the two tools:
 cmake -S ESP/tests/host -B build/asan -DRAVEN_SANITIZER=address -DCMAKE_BUILD_TYPE=Debug
 cmake -S ESP/tests/host -B build/tsan -DRAVEN_SANITIZER=thread -DCMAKE_BUILD_TYPE=Debug
 ```
 
-Один CTest executable содержит 17 сценариев: golden codec/invalid input; Critical admission, coalescing
-и tick под flood; fragment/coalesced framing и абсолютный timeout; handshake/keepalive/probe;
-admission/Written/semantic deadline; response раньше Written; stale RX/TX после reuse; конкурентный
-close против commit; потеря keepalive и ACK при полном TX; bounded journal; parser/reconnect;
-send tickets, I/O leases и 200 переиспользований; шесть peers/duplicate identity; не более одного
-optional diagnostic; SDK Log V1/V2 fragments; transport-independent PacketWriter; полный текст logs.
+One CTest executable contains 17 scenarios: golden codec/invalid input; Critical admission,
+coalescing, and ticks under flood; fragmented/coalesced framing and absolute timeout;
+handshake/keepalive/probe; admission/Written/semantic deadline; response before Written; stale
+RX/TX after reuse; concurrent close versus commit; lost keepalive and ACK with full TX; bounded
+journal; parser/reconnect; send tickets, I/O leases, and 200 reuses; six peers/duplicate identity;
+at most one optional diagnostic; SDK Log V1/V2 fragments; transport-independent PacketWriter;
+full logs text.
 
-`RAVEN_TCP_BOARD_PROBE=y` в **node test build** заменяет обычную композицию тестовым клиентом.
-`RAVEN_VALIDATION_MONITOR=y` добавляет UART snapshots каждые 10 секунд и дополнительную задачу
-3072 bytes; default обеих опций — off. Это не сервисная команда и не часть production-протокола.
+`RAVEN_TCP_BOARD_PROBE=y` in a **node test build** replaces the ordinary composition with a test client.
+`RAVEN_VALIDATION_MONITOR=y` adds UART snapshots every 10 seconds and an additional task with a
+3072-byte stack; both options default to off. This is neither a service command nor part of the production protocol.
 
-Для аппаратного TCP suite: обычные node временно останавливаются, MC работает с capacity=6, один
-test node подключается к AP и создаёт шесть сессий с явно тестовыми IDs. Автоматически проверяются:
-20 секунд handshake/keepalive всех peers; независимый close/reconnect; duplicate identity без takeover;
-неподдерживаемая версия, плохая length, partial frame deadline; non-reading peer под нагрузкой;
-последующее восстановление всех шести. Проверка здоровых сессий требует свежего keepalive (менее
-3 секунд), а не только открытого fd и прежнего handshake. Отдельно повторяется с подключённой BLE-консолью.
-После теста вернуть `RAVEN_TCP_BOARD_PROBE=n` и обычные node-прошивки.
+For the hardware TCP suite, ordinary nodes are temporarily stopped, MC runs with capacity=6, and one
+test node joins the AP and creates six sessions with explicitly test-only IDs. Automated checks cover:
+20 seconds of handshake/keepalive for all peers; independent close/reconnect; duplicate identity
+without takeover; unsupported version, invalid length, partial-frame deadline; a non-reading peer
+under load; and subsequent recovery of all six. Healthy-session checks require fresh keepalive
+(less than 3 seconds old), not merely an open fd and a previous handshake. The suite is repeated
+separately with a connected BLE console. After testing, restore `RAVEN_TCP_BOARD_PROBE=n` and ordinary node firmware.
 
-UART capture не отправляет прикладные команды:
+UART capture does not send application commands:
 
 ```powershell
 python ESP/tests/capture_serial.py COM4 COM5 COM6 COM7 --seconds 1835 --output .cache/capture
-# --reset COM5: обычный RTS/EN reset
-# --rom-reset COM4: reset через ROM/esptool для native USB
+# --reset COM5: ordinary RTS/EN reset
+# --rom-reset COM4: ROM/esptool reset for native USB
 python ESP/tests/check_capture.py .cache/capture --mc COM4 --nodes COM5 COM6 COM7 --seconds 1800
 ```
 
-`check_capture.py` исключает первые 20 секунд восстановления, затем требует непрерывных snapshots,
-трёх Ready bindings у MC и одного у каждого node, растущего last_seen, неизменных Boot ID/generation,
-ресурсных порогов и отсутствия reset/watchdog/timeout. Для автоматической остановки/возврата плат есть
-`--actions ESP/tests/four_boards.example.json`: номера COM в этом **стендовом сценарии** нужно изменить
-под конкретное подключение. Он не задаёт список плат приложения. После последнего восстановления
-стабильный интервал проверяется отдельно.
+`check_capture.py` excludes the first 20 seconds of recovery, then requires continuous snapshots,
+three Ready bindings on MC and one on each node, increasing last_seen, unchanged Boot ID/generation,
+resource thresholds, and no reset/watchdog/timeout. Automated board stop/return uses
+`--actions ESP/tests/four_boards.example.json`: COM numbers in this **bench scenario** must be adapted
+to the actual connections. It does not define the application's board list. The stable interval
+after the final recovery is checked separately.
 
-## Memory budget MC, capacity=6
+## MC memory budget, capacity=6
 
-Значения `sizeof` измерены компилятором Xtensa и подтверждены startup log на ESP32-S3.
-Ссылки/очереди не выделяются динамически при каждом сообщении. Таблицы слотов принадлежат Runtime.
+`sizeof` values were measured by the Xtensa compiler and confirmed by the ESP32-S3 startup log.
+References/queues are not dynamically allocated for each message. Runtime owns the slot tables.
 
-| Объект | Размер, bytes | Количество / вклад |
+| Object | Size, bytes | Count / contribution |
 |---|---:|---:|
-| Message | 88 | payload 64; раньше 48 с payload 24 |
-| Inbox | 1 520 | 9 = 13 680; раньше 880 каждый |
-| Dispatcher | 64 | 16 локальных endpoints; раньше 32 |
-| Session | 136 | 6 = 816; включая два SendRecord по 48 |
+| Message | 88 | payload 64; previously 48 with payload 24 |
+| Inbox | 1 520 | 9 = 13 680; previously 880 each |
+| Dispatcher | 64 | 16 local endpoints; previously 32 |
+| Session | 136 | 6 = 816; includes two SendRecord entries of 48 each |
 | PeerSlot | 240 | 6 = 1 440 |
 | PeerRecord | 72 | 12 = 864 |
 | Journal Record | 128 | 64 = 8 192 |
-| TcpEndpoint | 1 864 | 6 = 11 184; **включает** TX Inbox, не прибавлять его повторно |
-| BLE transport | 4 200 | bounded RX×4/TX×8, control blocks и активный frame |
-| Runtime целиком | 32 240 | всё выше + сервисы/владельцы/парсеры/ссылки; без task stacks |
+| TcpEndpoint | 1 864 | 6 = 11 184; **includes** TX Inbox, do not count it twice |
+| BLE transport | 4 200 | bounded RX×4/TX×8, control blocks, and active frame |
+| Entire Runtime | 32 240 | all of the above + services/owners/parsers/references; excludes task stacks |
 
-Payload 64 определяется `Inbound{route, receive_time, Body}` и `Outbound{route, SendToken, Body}`:
-оба ровно 64 bytes. Body 48 определяется Hello, а не произвольным будущим bulk-трафиком.
-Размеры проверяются `static_assert`; изменение контракта требует нового расчёта.
+Payload 64 is determined by `Inbound{route, receive_time, Body}` and `Outbound{route, SendToken, Body}`:
+both are exactly 64 bytes. Body 48 is determined by Hello, not arbitrary future bulk traffic.
+Sizes are checked with `static_assert`; contract changes require a new calculation.
 
 | Application tasks | Stack bytes |
 |---|---:|
 | 6 TCP RX + 6 TCP TX | 36 864 |
 | PeerService + DiagnosticsService | 8 192 |
 | TCP manager + BLE RX + BLE TX | 9 216 |
-| Итого: 17 задач | 54 272 |
-| TCB, mutexes, RTOS metadata: резерв | 4 096 |
+| Total: 17 tasks | 54 272 |
+| TCB, mutexes, RTOS metadata: reserve | 4 096 |
 
-SDK tasks/radio pools идут сверх этих application stacks: Wi-Fi stack 6656, NimBLE host 4096,
-lwIP task 3072 bytes, event/controller/idle/timer tasks и SDK globals учитываются в link map и
-измерении heap после их запуска. NimBLE MSYS1/MSYS2/ACL pools настроены на 8 blocks каждый;
-Wi-Fi static RX/dynamic RX/dynamic TX — по 6. PSRAM не используется.
+SDK tasks/radio pools are additional to these application stacks: Wi-Fi stack 6656, NimBLE host 4096,
+lwIP task 3072 bytes, event/controller/idle/timer tasks, and SDK globals are accounted for in the link
+map and heap measurements after startup. NimBLE MSYS1/MSYS2/ACL pools are configured for 8 blocks each;
+Wi-Fi static RX/dynamic RX/dynamic TX each have 6. PSRAM is not used.
 
-Динамическая часть коммуникационного профиля, консервативные резервы поверх пустых сессий:
+Dynamic communication-profile allocations, with conservative reserves beyond empty sessions:
 
-| Ресурс | Резерв, bytes | Основание |
+| Resource | Reserve, bytes | Basis |
 |---|---:|---|
-| TCP TX | 19 200 | 6×2 pbuf до 1600 bytes с MSS/header/metadata |
-| TCP RX с L2→L3 copy | 20 736 | 6×2880 window + 36×96 metadata/header |
-| Общие Wi-Fi dynamic RX | 12 288 | 6×2048 на выравнивание/полный frame |
-| Общие Wi-Fi dynamic TX | 12 288 | 6×2048, Wi-Fi копирует TX |
-| TCP/netconn/mailboxes/allocator | 6 144 | шесть bindings, очереди SDK и metadata |
-| Connect/close transient reserve | 4 096 | параллельные lifecycle-переходы |
-| Подключённый BLE-клиент | 6 144 | сверх startup radio pools; наблюдавшаяся разница около 4,7 KiB |
-| Итого динамический резерв | 80 896 | не прибавлять Runtime/stack второй раз к уже измеренному heap |
+| TCP TX | 19 200 | 6×2 pbuf up to 1600 bytes including MSS/header/metadata |
+| TCP RX with L2→L3 copy | 20 736 | 6×2880 window + 36×96 metadata/header |
+| Shared Wi-Fi dynamic RX | 12 288 | 6×2048 for alignment/full frame |
+| Shared Wi-Fi dynamic TX | 12 288 | 6×2048; Wi-Fi copies TX |
+| TCP/netconn/mailboxes/allocator | 6 144 | six bindings, SDK queues, and metadata |
+| Connect/close transient reserve | 4 096 | concurrent lifecycle transitions |
+| Connected BLE client | 6 144 | beyond startup radio pools; observed difference about 4.7 KiB |
+| Total dynamic reserve | 80 896 | do not subtract Runtime/stacks twice from already measured free heap |
 
-В итоговой production-прошивке startup free internal DMA heap 110 664 bytes после радио и application owners.
-После выхода из `app_main` освобождаются ещё 3584 bytes его стека (`CONFIG_ESP_MAIN_TASK_STACK_SIZE`);
-возвращаемый TCB в запас не засчитываем. Оценка production: 110 664 + 3584 − 80 896 = **33 352 bytes**.
-Это консервативный резерв для данного ICD/window/profile, а не гарантия произвольной нагрузки всей
-сети. Allocation overhead и фрагментация проверяются на железе по free/min, largest block и stack
-high-water marks. Тестовая monitor task дополнительно расходует 3072 bytes стека и TCB; её расход
-входит в аппаратные замеры ниже, но не в production-профиль.
+In the final production firmware, startup free internal DMA heap is 110 664 bytes after radio and
+application owners start. Returning from `app_main` frees another 3584 bytes of its stack
+(`CONFIG_ESP_MAIN_TASK_STACK_SIZE`); the returned TCB is not counted as reserve. Production estimate:
+110 664 + 3584 − 80 896 = **33 352 bytes**. This is a conservative reserve for this ICD/window/profile,
+not a guarantee under arbitrary network load. Allocation overhead and fragmentation are checked
+on hardware using free/min heap, largest block, and stack high-water marks. The test monitor task
+additionally consumes a 3072-byte stack and a TCB; this is included in the hardware measurements
+below but not in the production profile.
 
-Критерии стенда: минимум 32 KiB internal DMA heap, largest block ≥8 KiB, свободный стек каждого
-application owner и NimBLE host ≥1 KiB. При увеличении capacity проверить эти критерии заново.
+Bench criteria: at least 32 KiB internal DMA heap, largest block ≥8 KiB, and free stack of every
+application owner and the NimBLE host ≥1 KiB. Recheck these criteria when increasing capacity.
 
-### Почему именно эти настройки lwIP
+### Rationale for the lwIP settings
 
-ESP-IDF 6.1.1 задаёт `LWIP_NETIF_TX_SINGLE_PBUF=1`; выключить TCP_OVERSIZE с ним нельзя — SDK не
-собирается. `tcp_pbuf_prealloc` резервирует полный MSS даже под короткий кадр. Поэтому одного
-`TCP_SND_BUF=2880` недостаточно для оценки множества маленьких отправок.
+ESP-IDF 6.1.1 sets `LWIP_NETIF_TX_SINGLE_PBUF=1`; TCP_OVERSIZE cannot be disabled with it because the
+SDK will not build. `tcp_pbuf_prealloc` reserves a full MSS even for a short frame. Therefore,
+`TCP_SND_BUF=2880` alone is insufficient to budget many small sends.
 
-В `communication_profile.cmake`: `TCP_SND_QUEUELEN=4`, `TCP_SNDQUEUELOWAT=2`, `TCP_SNDLOWAT=128`.
-Writer один и делает select перед каждым кадром ≤66 bytes. lwIP `api_msg.c` снимает writability
-при двух queued pbuf; следующая запись происходит после освобождения места. Таким образом data pbuf
-одного writer ограничены двумя. Копии TCP/Wi-Fi считаются отдельно. SDK sources не изменены.
+In `communication_profile.cmake`: `TCP_SND_QUEUELEN=4`, `TCP_SNDQUEUELOWAT=2`, `TCP_SNDLOWAT=128`.
+There is one writer, which runs select before each frame ≤66 bytes. lwIP `api_msg.c` removes
+writability at two queued pbuf; the next write occurs after space becomes available. Thus, one
+writer's data pbuf are limited to two. TCP/Wi-Fi copies are counted separately. SDK sources are unchanged.
 
-Первый аппаратный slow-reader прогон воспроизвёл истощение общего RX pool на тестовом узле при
-`L2_TO_L3_COPY=n`: другие его сессии потеряли heartbeat. После включения copy тот же тест проходит;
-MC закрывает только slow stream с `send-deadline`. SDK `wlanif.c` подтверждает освобождение L2 buffer
-после копирования, а retained L3 bytes учитываются в TCP RX budget выше.
+The first hardware slow-reader run reproduced shared RX-pool exhaustion on the test node with
+`L2_TO_L3_COPY=n`: its other sessions lost heartbeat. The same test passes after enabling copy;
+MC closes only the slow stream with `send-deadline`. SDK `wlanif.c` confirms release of the L2 buffer
+after copying, and retained L3 bytes are included in the TCP RX budget above.
 
-## Зафиксированные результаты этапа
+## Recorded stage results
 
-- Host: 17/17 сценариев проходят на Windows (Zig 0.15.2 / Clang 20.1.2, C++17, warnings as errors).
-- ESP-IDF: MC ESP32-S3 и node ESP32 собраны. Реальный Wi-Fi TCP suite завершён всеми шестью PASS,
-  без reset/panic/watchdog MC. После исправления L2 copy остальные пять peers переживают slow reader.
-- MC с шестью TCP и BLE advertising: minimum internal DMA heap **93 568**, largest sampled block
-  **65 536**, minimum sampled owner/host stack **1 252** bytes. Эти числа включают validation task.
-- Пользователь подтвердил читаемые BLE `help/status/stats/logs/watch off` и оставил приложение подключённым.
-- Повтор того же полного TCP suite с активным BLE завершён шестью PASS. MC: minimum heap **87 244**,
+- Host: 17/17 scenarios pass on Windows (Zig 0.15.2 / Clang 20.1.2, C++17, warnings as errors).
+- ESP-IDF: MC ESP32-S3 and node ESP32 built. The real Wi-Fi TCP suite completed with all six PASS,
+  without MC reset/panic/watchdog. After the L2-copy fix, the other five peers survive the slow reader.
+- MC with six TCP sessions and BLE advertising: minimum internal DMA heap **93 568**, largest
+  sampled block **65 536**, minimum sampled owner/host stack **1 252** bytes. These include the validation task.
+- The user confirmed readable BLE `help/status/stats/logs/watch off` responses and left the app connected.
+- Repeating the same full TCP suite with active BLE completed with six PASS. MC: minimum heap **87 244**,
   minimum sampled largest block **63 488**, minimum sampled stack **1 252** bytes.
-- Четыре физические платы первоначально подняли общий handshake: MC `E072A1D72014` (COM4), nodes
-  `08A6F76BBA34` (COM5), `246F2836590C` (COM6), ESP32-CAM `D0EF765CC8BC` (после переноса USB — COM7).
-  У CAM воспроизводилась потеря serial response, устранявшаяся снятием питания; это отдельное ограничение стенда.
-- Проверены индивидуальные остановки каждого node на 15 секунд и возврат без нарушения остальных связей;
-  остановка/возврат MC при работающих nodes; последовательные перезапуски COM5, COM7, COM6.
-  Каждый вернулся с новым Boot ID, MC переиспользовал слоты с новым generation. Остановки делались
-  удержанием приложения в ROM через esptool; физическое снятие питания CAM дополнительно выполнил пользователь.
+- Four physical boards initially completed the shared handshake: MC `E072A1D72014` (COM4), nodes
+  `08A6F76BBA34` (COM5), `246F2836590C` (COM6), and ESP32-CAM `D0EF765CC8BC` (COM7 after moving USB).
+  CAM reproducibly lost serial response, recovered by removing power; this is a separate bench limitation.
+- Each node was stopped individually for 15 seconds and returned without disrupting other links;
+  MC was stopped/returned while nodes remained running; COM5, COM7, and COM6 were restarted in sequence.
+  Each returned with a new Boot ID; MC reused slots with a new generation. Stops held the application
+  in ROM through esptool; the user additionally physically power-cycled CAM.
 
-- [CI для 3290f57](https://github.com/ilyxas/litu_raven/actions/runs/45737377589): все шесть jobs прошли —
-  Linux host, ASan/UBSan, TSan; firmware MC ESP32-S3, node ESP32 и node ESP32-S3.
+- [CI for 3290f57](https://github.com/ilyxas/litu_raven/actions/runs/45737377589): all six jobs passed —
+  Linux host, ASan/UBSan, TSan; MC ESP32-S3, node ESP32, and node ESP32-S3 firmware.
 
-Итоговая непрерывная запись четырёх плат — 1835 секунд; после исключения первых 20 секунд
-восстановления `check_capture.py --seconds 1800` прошёл на каждой плате (181–182 snapshots).
-Все связи оставались Ready, last_seen рос, Boot ID/slot/generation не менялись; reset/watchdog,
-таймаутов и новых diagnostic drops в этом интервале нет. На COM6 счётчик уже содержал одну потерю
-диагностики при старте и далее не рос. BLE был подключён с 127-й секунды до конца записи.
+The final continuous four-board capture lasted 1835 seconds; after excluding the first 20 seconds
+of recovery, `check_capture.py --seconds 1800` passed for every board (181–182 snapshots).
+All links remained Ready, last_seen increased, and Boot ID/slot/generation stayed unchanged;
+there were no resets, watchdogs, timeouts, or new diagnostic drops during the interval. COM6's
+counter already contained one startup diagnostic drop and did not increase. BLE was connected
+from second 127 through the end of the capture.
 
-| Плата | Minimum internal DMA heap | Minimum sampled largest block | Minimum owner/host stack |
+| Board | Minimum internal DMA heap | Minimum sampled largest block | Minimum owner/host stack |
 |---|---:|---:|---:|
 | COM4 / MC | 91 860 | 63 488 | 1 312 |
 | COM5 / node | 198 192 | 110 592 | 1 480 |
 | COM6 / node | 198 068 | 110 592 | 1 472 |
 | COM7 / CAM node | 197 156 | 110 592 | 1 544 |
 
-После выдержки выполнен полный повтор TCP suite с усиленной проверкой свежести keepalive и тем же
-BLE-соединением, без перезапуска MC: **6/6 PASS**. Slow reader закрыт с `send-deadline`, остальные пять
-сессий продолжили обмен; затем восстановлены все шесть. На этом прогретом MC с повторным использованием
-сессий минимум heap **82 632**, largest sampled block **59 392**, minimum stack **1 256** bytes.
-Reset/panic/watchdog MC и новых diagnostic drops нет. Здесь зафиксирован наименьший heap данного этапа.
+After the soak, the full TCP suite was repeated with stronger keepalive-freshness checks and the
+same BLE connection, without restarting MC: **6/6 PASS**. The slow reader was closed with
+`send-deadline`; the other five sessions continued exchanging messages, then all six were restored.
+On this warmed-up MC with reused sessions, minimum heap was **82 632**, largest sampled block
+**59 392**, and minimum stack **1 256** bytes. No MC reset/panic/watchdog or new diagnostic drops
+occurred. This run recorded the stage's lowest heap.
 
-На всех четырёх платах оставлены обычные прошивки с `RAVEN_VALIDATION_MONITOR=n` и
-`RAVEN_TCP_BOARD_PROBE=n`: MC image 1 054 240 bytes, node image 826 640 bytes. Flash каждого устройства
-проверена esptool по хешу; CAM прошита ROM loader с `--no-stub`. Последующее 60-секундное наблюдение
-после reset MC подтвердило Ready всех трёх nodes и BLE_READY, отсутствие тестового вывода и новых
-ошибок после восстановления связей. Serial-порты освобождены.
+All four boards were left with ordinary firmware using `RAVEN_VALIDATION_MONITOR=n` and
+`RAVEN_TCP_BOARD_PROBE=n`: MC image 1 054 240 bytes, node image 826 640 bytes. Esptool verified each
+board's flash by hash; CAM was flashed through the ROM loader with `--no-stub`. Subsequent 60-second
+observation after MC reset confirmed all three nodes Ready and BLE_READY, no test output, and no
+new errors after link recovery. Serial ports were released.
 
-Старые отчёты «25/25 на Arm Demo» не являются проверкой этой реализации. Реального iOS-клиента и UART
-transport в текущем этапе нет; их работоспособность не заявляется.
+Earlier "25/25 on Arm Demo" reports do not validate this implementation. No real iOS client or UART
+transport is present in this stage; their operation is not claimed.

@@ -1,617 +1,617 @@
-# Raven — архитектурная спецификация
+# Raven — Architectural Specification
 
 <a id="scope"></a>
-## Назначение и обязательность
+## Purpose and authority
 
-Raven — система поведения и взаимодействия подсистем. Эта спецификация определяет
-её концептуальную модель, роли, границы зависимостей, контракты и обязательные
-инварианты. Она служит основанием для проектирования и проверки реализации.
-Временное сокращение кода, отсутствие конкретной подсистемы или успешный запуск
-не меняют архитектурных требований.
+Raven is a system for behavior and subsystem interaction. This specification defines
+its conceptual model, roles, dependency boundaries, contracts, and mandatory
+invariants. It provides the basis for designing and reviewing implementations.
+Temporary implementation shortcuts, the absence of a particular subsystem, or a
+successful run do not change architectural requirements.
 
-Термины «должен», «обязан» и «запрещено» задают требования. Роль определяется
-ответственностью и публичным контрактом, а не именем класса, наследованием,
-каталогом, протоколом или RTOS-примитивом. Отсутствие экземпляра роли в конкретной
-композиции не отменяет её определения.
+The terms "must", "shall", and "must not" express requirements. A role is defined
+by responsibility and public contract, not by a class name, inheritance,
+directory, protocol, or RTOS primitive. The absence of a role instance in a
+particular composition does not invalidate its definition.
 
-Поведенческое ядро включает Activity, Service и State как архитектурные роли.
-Исполнительная основа, адаптеры и платформенные providers обеспечивают их работу.
-Границы этих понятий не определяются именами программных пакетов.
+The behavioral core includes Activity, Service, and State as architectural roles.
+The execution substrate, adapters, and platform providers support their operation.
+The boundaries of these concepts are not defined by software package names.
 
 <a id="governance"></a>
-Любой слой и любой принцип могут быть пересмотрены обоснованным архитектурным
-решением. Такое решение явно определяет проблему, альтернативы, изменяемый
-контракт, последствия и способ проверки. До принятия изменения действует
-существующее правило. Несоответствие кода является несоответствием реализации,
-а не основанием молча ослабить спецификацию.
+Any layer or principle may be revised through a justified architectural decision.
+That decision explicitly identifies the problem, alternatives, the contract being
+changed, consequences, and verification approach. The existing rule applies until
+the change is accepted. A code deviation is an implementation deviation, not a
+reason to silently weaken the specification.
 
-Проверка на компьютере, в симуляции и на реальном оборудовании подтверждает
-проверенные свойства. Она не заменяет анализа архитектурного соответствия.
-Описание конкретного backend, wire-протокола, конфигурации ресурсов и результаты
-измерений ведутся отдельно от общих норм.
+Host, simulation, and hardware tests confirm the properties they exercise.
+They do not replace architectural compliance analysis. Descriptions of specific
+backends, wire protocols, resource configurations, and measured results are
+maintained separately from general requirements.
 
-## Архитектурные аксиомы
+## Architectural axioms
 
 <a id="a01"></a>
-### A01. Raven — платформенно независимая поведенческая система
+### A01. Raven is a platform-independent behavioral system
 
-ESP32/FreeRTOS является одним из возможных backend исполнения. Архитектура
-сохраняет смысл вне ESP: те же роли и контракты действуют в симуляции и при
-исполнении на компьютере. Наличие физического оборудования необязательно.
-Платформенные детали находятся ниже поведенческого ядра.
+ESP32/FreeRTOS is one possible execution backend. The architecture retains its
+meaning outside ESP: the same roles and contracts apply in simulation and on a
+host computer. Physical hardware is optional. Platform details belong below the
+behavioral core.
 
 <a id="a02"></a>
-### A02. Activity, Service и State принадлежат поведенческому ядру
+### A02. Activity, Service, and State belong to the behavioral core
 
-Activity владеет оркестрацией и логикой режимов или сценариев. Service владеет
-работой своей подсистемы. State представляет каноническое общее знание.
-Эти роли не являются конструкциями ESP или FreeRTOS.
+Activity owns orchestration and mode or scenario logic. Service owns its
+subsystem's work. State represents canonical shared knowledge.
+These roles are not ESP or FreeRTOS constructs.
 
-Платформенная зависимость внутри поведенческого слоя считается отклонением,
-которое нужно явно обозначить и устранить либо рассмотреть отдельным
-архитектурным решением. Само наличие зависимости в коде не делает её нормой.
+A platform dependency inside the behavioral layer is a deviation that must be
+explicitly identified and removed or considered through a separate architectural
+decision. The presence of a dependency in code does not make it a requirement.
 
 <a id="a03"></a>
-### A03. Семантический смысл важнее транспортного происхождения сообщения
+### A03. Semantic meaning takes precedence over transport origin
 
-Вход может поступить через TCP, UART, RF, mock, симуляцию, синтетический источник
-датчиков или локальную генерацию. Для поведения значимы смысл сообщения,
-контракт payload, допустимость маршрута и принадлежность обработки владельцу.
-Одинаковый семантический контракт не приобретает иной смысл из-за способа доставки.
+Input may arrive through TCP, UART, RF, a mock, simulation, a synthetic sensor
+source, or local generation. Behavior depends on message meaning, the payload
+contract, route legitimacy, and handling ownership. The same semantic contract
+does not acquire a different meaning because of its delivery path.
 
-Идентичность участника, корреляция и актуальность обращения могут входить в
-объявленный семантический контракт. Их нельзя неявно подменять знанием сокета,
-драйвера или типа транспорта.
+Participant identity, correlation, and request validity may be part of a declared
+semantic contract. They must not be implicitly replaced with knowledge of a
+socket, driver, or transport type.
 
 <a id="a04"></a>
-### A04. Внешний транспорт является адаптерной границей
+### A04. External transport is an adapter boundary
 
-Wire-форматы, framing, внешние идентификаторы сообщений, кодеки и gateways:
+Wire formats, framing, external message identifiers, codecs, and gateways:
 
-- принимают внешнее представление;
-- проверяют его корректность;
-- переводят его в известный внутренний семантический контракт;
-- доставляют его надлежащему владельцу через установленный admission.
+- accept an external representation;
+- validate it;
+- translate it into a known internal semantic contract;
+- deliver it to the appropriate owner through the established admission contract.
 
-Эта граница не является центром предметной семантики. Внешний пакет и внутреннее
-сообщение имеют самостоятельные контракты; внутренние структуры памяти и локальные
-адреса компонентов не становятся wire-протоколом автоматически.
+This boundary is not the center of domain semantics. An external packet and an
+internal message have independent contracts; internal memory layouts and local
+component addresses do not automatically become the wire protocol.
 
 <a id="a05"></a>
-### A05. Маршрутизация — строгая политика admission
+### A05. Routing is strict admission policy
 
-Компонент может получить сообщение только при одновременном выполнении условий:
+A component may receive a message only when all of the following hold:
 
-- сообщение известно;
-- payload соответствует ожидаемому контракту;
-- для внешнего представления существует явный decoder или адаптер;
-- маршрут явно зарегистрирован или установлен контрактом адресного входа;
-- получатель предназначен для этой обработки и объявил принимаемый контракт.
+- the message is known;
+- its payload matches the expected contract;
+- an explicit decoder or adapter exists for an external representation;
+- the route is explicitly registered or established by an addressed input contract;
+- the recipient is intended to handle it and has declared the accepted contract.
 
-Уже сформированное внутреннее сообщение не требует wire-декодирования, но остаётся
-подчинено тем же семантическим ограничениям и правилам admission. Нельзя доставлять
-данные неподготовленному компоненту или обходить проверки через альтернативный API.
+An already formed internal message does not require wire decoding, but remains
+subject to the same semantic constraints and admission rules. Data must not reach
+an unprepared component or bypass validation through an alternative API.
 
 <a id="a06"></a>
-### A06. Архитектурные роли отделены от исполнительных механизмов
+### A06. Architectural roles are separate from execution mechanisms
 
-Activity определяется оркестрационной ответственностью, Service — исполнением
-подсистемной работы. Задачи, очереди, tick, уведомления и scheduling принадлежат
-исполнительной основе. Поведенческая модель не обязана оперировать понятиями
-FreeRTOS. Общий интерфейс исполняемого компонента не объединяет разные роли
-в одну ответственность.
+Activity is defined by orchestration responsibility; Service is defined by
+subsystem execution. Tasks, queues, ticks, notifications, and scheduling belong
+to the execution substrate. The behavioral model need not operate in FreeRTOS
+terms. A common executable-component interface does not merge distinct roles
+into a single responsibility.
 
 <a id="a07"></a>
-### A07. Исполнительная основа размещает роли, а не определяет их
+### A07. The execution substrate hosts roles rather than defining them
 
-Исполнительная основа обеспечивает:
+The execution substrate provides:
 
-- асинхронное поступление работы;
-- доставку и хранение входящих сообщений;
-- периодическое обслуживание;
-- корректное владение данными сообщений до конца обработки;
-- разделение и управляемое исполнение контекстов владельцев.
+- asynchronous arrival of work;
+- delivery and storage of incoming messages;
+- periodic servicing;
+- valid ownership of message data through the end of handling;
+- separation and controlled execution of owner contexts.
 
-Поведение Activity и Service выражается поверх этих механизмов. Последовательность
-обработчиков и размещение владельца могут обеспечиваться разными backend.
-Разделение контекстов не означает изоляцию адресных пространств.
+Activity and Service behavior is expressed above these mechanisms. Different
+backends may provide handler sequencing and owner placement.
+Context separation does not imply address-space isolation.
 
 <a id="a08"></a>
-### A08. Межконтекстная доставка безопасна по владению
+### A08. Delivery across contexts is ownership-safe
 
-В момент успешного admission сообщение должно стать самодостаточным для доставки.
-Получатель не зависит от срока жизни исходного буфера производителя. Payload
-остаётся действительным до завершения обработки.
+At successful admission, a message must become self-contained for delivery.
+The recipient does not depend on the lifetime of the producer's original buffer.
+The payload remains valid until handling completes.
 
-Если данные находились во внешней памяти, простого копирования указателя
-недостаточно: необходимые данные должны быть скопированы с определённым владением.
-Заимствованный mutable-буфер не может пересекать очередь как обычный payload.
-Это гарантия контракта доставки, а не побочный эффект текущего способа хранения.
+When data resides in external memory, copying a pointer is insufficient: the
+required data must be copied with defined ownership. A borrowed mutable buffer
+must not cross a queue as an ordinary payload. This is a delivery-contract
+guarantee, not an incidental property of the current storage mechanism.
 
 <a id="a09"></a>
-### A09. Предметная логика исполняется только в контексте владельца
+### A09. Business logic executes only in owner context
 
-Решения Activity и работа Service выполняются в назначенном контексте компонента,
-который ими владеет. Они не исполняются в event callback, транспортном ingress
-или чужой задаче. Сообщения могут иметь много производителей; это не создаёт
-несколько независимых контекстов исполнения одного владельца.
+Activity decisions and Service work execute in the assigned context of the
+component that owns them. They do not execute in an event callback, transport
+ingress, or a foreign task. Messages may have many producers; that does not
+create multiple independent execution contexts for one owner.
 
-Admission и разрешённое чтение State не являются вызовом чужой предметной логики.
-Ограниченная обработка платформенного ввода принадлежит адаптеру; она не даёт ему
-права исполнять поведение Activity или Service.
+Admission and permitted State reads are not calls to another owner's business
+logic. Bounded platform-input processing belongs to an adapter; it does not
+authorize the adapter to execute Activity or Service behavior.
 
 <a id="a10"></a>
-### A10. State — единственный канонический источник общего знания
+### A10. State is the single canonical source of shared knowledge
 
-Если знание требуется более чем одному компоненту, оно представляется в State.
-Activity и Service читают его через согласованный интерфейс и обновляют только
-через разрешённые пути владения. Для одного общего факта не допускаются
-несогласованные изменяемые источники истины.
+Knowledge required by more than one component is represented in State.
+Activities and Services read it through an agreed interface and update it only
+through authorized ownership paths. A shared fact must not have inconsistent,
+mutable sources of truth.
 
-Snapshot является наблюдением канонического состояния на определённый момент.
-Локальная рабочая копия не становится самостоятельным авторитетным хранилищем.
-Внутренние детали исполнения, не составляющие общее знание, остаются у владельца.
+A snapshot is an observation of canonical state at a particular moment.
+A local working copy does not become an independent authoritative store.
+Internal execution details that are not shared knowledge remain with their owner.
 
 <a id="a11"></a>
-### A11. Activity оркестрирует, Service исполняет
+### A11. Activities orchestrate; Services perform
 
-- Activity определяет, что требуется сценарию или режиму системы.
-- Service выполняет работу своей подсистемы.
-- State хранит каноническое знание.
-- Адаптеры соединяют поведенческую модель с внешним миром.
+- Activity determines what a scenario or system mode requires.
+- Service performs its subsystem's work.
+- State stores canonical knowledge.
+- Adapters connect the behavioral model to the outside world.
 
-Activity не выполняет низкоуровневую подсистемную работу напрямую.
-Service не присваивает общесистемные решения оркестрации. Внутренняя FSM сервиса,
-включая подготовку, исполнение, восстановление и завершение его операций,
-остаётся частью подсистемной ответственности.
+Activity does not perform low-level subsystem work directly.
+Service does not take ownership of system-wide orchestration decisions. A service's
+internal FSM, including preparation, execution, recovery, and completion of its
+operations, remains part of its subsystem responsibility.
 
 <a id="a12"></a>
-### A12. Tick — полноценный вход поведения
+### A12. Tick-driven behavior is a first-class part of the model
 
-Message-driven и time-driven поведение являются равноправными частями модели.
-Владелец может на периодическом шаге читать статусы, продвигать операцию,
-проверять свои deadlines и пересматривать принадлежащую ему политику.
-Activity может менять решение сценария на своём tick, сохраняя взаимодействие
-с независимо работающими сервисами.
+Message-driven and time-driven behavior are equally valid parts of the model.
+During a periodic step, an owner may read status, advance an operation, check its
+deadlines, and revise the policy it owns. An Activity may revise a scenario decision
+on its own tick while interacting with independently operating services.
 
-Tick поддерживает policy loops, supervision, автономное и sensor-driven поведение.
-Он не сводится к watchdog или единственному способу получения состояния устройства.
+Ticks support policy loops, supervision, autonomy, and sensor-driven behavior.
+They are not limited to a watchdog or the sole means of obtaining device state.
 
 <a id="a13"></a>
-### A13. Физическое оборудование — один из возможных providers
+### A13. Physical hardware is one possible provider
 
-Нижние слои могут предоставлять физические датчики, симулированные датчики,
-mock-устройства, синтетические управляющие потоки и воспроизведение записанных
-данных. Поведенческий контракт сохраняется при замене provider.
-Знание о физической или синтетической реализации находится в нижнем слое,
-а не в условных ветвлениях предметной логики.
+Lower layers may provide physical sensors, simulated sensors, mock devices,
+synthetic control streams, and replayed data. The behavioral contract remains
+valid when the provider is replaced. Knowledge of whether an implementation is
+physical or synthetic belongs to the lower layer, not to conditionals in business
+logic.
 
 <a id="a14"></a>
-### A14. Конкретные подсистемы проверяют архитектуру, а не определяют её
+### A14. Concrete subsystems exercise the architecture; they do not define it
 
-Продуктовый или экспериментальный срез должен позволять проверять отзывчивость,
-поведение под нагрузкой, маршрутизацию, границы владения и взаимодействие
-оркестрации с исполнением. Его предметная область не становится границей Raven.
+A product or experimental slice must enable verification of responsiveness,
+behavior under load, routing, ownership boundaries, and the interaction between
+orchestration and execution. Its domain does not become the boundary of Raven.
 
-Срез можно удалить после выполнения его задачи. Отсутствие конкретной Activity,
-Service, State или provider не отменяет роль и её контракт. Переиспользуемые
-архитектурные возможности сохраняют смысл независимо от текущего потребителя;
-обоснование отдельного класса рассматривается отдельно от существования роли.
-Архитектурные выводы продолжают проверяться в других сценариях и на реальном
-оборудовании.
+A slice may be removed after it has served its purpose. The absence of a concrete
+Activity, Service, State, or provider does not invalidate the role or its contract.
+Reusable architectural capabilities remain meaningful without a current consumer;
+the justification for a particular class is separate from the existence of a role.
+Architectural conclusions continue to be tested in other scenarios and on real
+hardware.
 
-Аксиомы определяют интерпретацию системы. Ролевые определения и инварианты ниже
-конкретизируют их; текущая композиция должна оцениваться относительно этих норм.
+The axioms determine how the system is interpreted. The role definitions and
+invariants below make them concrete; the current composition must be assessed
+against these requirements.
 
-## Архитектурные роли
+## Architectural roles
 
 <a id="role-activity"></a>
 ### Activity
 
-Activity — высокоуровневый владелец оркестрации, сценария или режима и переходов
-между его состояниями. Режимы boot, idle, manual, autonomous, recovery и fault
-являются допустимыми примерами; роль не ограничена машиной или глобальным режимом.
-FSM — возможный способ выражения её логики.
+Activity is the high-level owner of orchestration, a scenario or mode, and
+transitions between its states. Boot, idle, manual, autonomous, recovery, and fault
+are valid examples; the role is not restricted to a vehicle or a global mode.
+An FSM is one possible way to express its logic.
 
-Ответственности:
+Responsibilities:
 
-- **ACT-01.** Получать предназначенные ей системные события и реагировать на
-  изменения канонического State.
-- **ACT-02.** Определять, какие возможности и режимы работы сервисов нужны сценарию.
-- **ACT-03.** Передавать направленные команды сервисам, когда сценарий или переход
-  режима требует действия; соблюдать их admission- и исполнительные контракты.
-- **ACT-04.** Читать согласованные snapshots State для оркестрационных решений.
-- **ACT-05.** Исполнять решения последовательно в своём назначенном owner context,
-  используя объявленный вход сообщений и периодическое обслуживание.
+- **ACT-01.** Receive the system events intended for it and react to changes in
+  canonical State.
+- **ACT-02.** Determine which service capabilities and operating modes a scenario needs.
+- **ACT-03.** Send directed commands to services when a scenario or mode transition
+  requires action, respecting their admission and execution contracts.
+- **ACT-04.** Read consistent State snapshots for orchestration decisions.
+- **ACT-05.** Execute decisions sequentially in its assigned owner context,
+  using a declared message input and periodic servicing.
 
-Ограничения:
+Constraints:
 
-- **ACT-06.** Не обращаться напрямую к аппаратным драйверам и peripheral API.
-- **ACT-07.** Не изменять общее состояние в обход Controller/State API и не
-  присваивать право записи чужого State. Состояние собственного сценария
-  публикуется через предназначенный для него state-контракт.
-- **ACT-08.** Не выполнять блокирующий внешний I/O; соответствующая работа
-  запрашивается у исполнителя через его контракт.
-- **ACT-09.** Не выполнять оркестрационную логику в платформенном event callback.
-- **ACT-10.** Не угадывать сроки исполнения чужой подсистемы и не объявлять исход
-  чужой операции вместо её владельца. Activity наблюдает предусмотренный
-  сервисным контрактом статус и решает, как продолжать свой сценарий.
+- **ACT-06.** Do not access hardware drivers or peripheral APIs directly.
+- **ACT-07.** Do not modify shared state outside the Controller/State API or assume
+  write ownership of another owner's State. Publish the scenario's own state
+  through its designated state contract.
+- **ACT-08.** Do not perform blocking external I/O; request that work from an
+  executor through its contract.
+- **ACT-09.** Do not execute orchestration logic in a platform event callback.
+- **ACT-10.** Do not guess another subsystem's execution deadlines or declare an
+  operation's outcome on behalf of its owner. Observe the status provided by
+  the service contract and decide how to continue the scenario.
 
 <a id="role-service"></a>
 ### Service
 
-Service — асинхронный владелец работы связной аппаратной подсистемы или
-программного стека. Он инкапсулирует способ выполнения работы: взаимодействие
-с provider, внутреннюю последовательность действий, ограничения, прогресс
-и предусмотренные исходы. Работа может быть реактивной, конечной или непрерывной.
+Service is the asynchronous owner of work for a coherent hardware subsystem or
+software stack. It encapsulates how work is performed: provider interaction,
+internal sequencing, constraints, progress, and defined outcomes.
+Work may be reactive, finite, or continuous.
 
-Ответственности:
+Responsibilities:
 
-- **SVC-01.** Обслуживать подсистему в своём owner context на протяжении её
-  lifecycle, реагируя на сообщения, callbacks через вход владельца и tick.
-  Ожидание входа не нарушает непрерывную готовность сервиса к работе.
-- **SVC-02.** Получать данные от hardware/providers/внешних стеков через
-  соответствующие контракты и публиковать общее знание через State.
-- **SVC-03.** Публиковать предусмотренные контрактом события о значимых фактах
-  и переходах всем зарегистрированным для этих событий потребителям через
-  механизм событийной доставки.
-- **SVC-04.** Принимать и исполнять направленные команды из своего входа,
-  различая admission, предметное принятие задания и итог исполнения.
-- **SVC-05.** Владеть сроками и результатами своих операций. Для принятого
-  конечного задания обеспечивать предусмотренный контрактом итог, включая
-  неуспех, отмену, вытеснение или истечение собственного deadline.
-  Для продолжающегося управления определять условия обновления цели и завершения.
+- **SVC-01.** Service the subsystem in its owner context throughout its lifecycle,
+  reacting to messages, callbacks delivered through the owner's input, and ticks.
+  Waiting for input does not violate the service's continuous readiness to work.
+- **SVC-02.** Obtain data from hardware, providers, or external stacks through
+  their contracts and publish shared knowledge through State.
+- **SVC-03.** Publish contractually defined events about significant facts and
+  transitions to all consumers registered for those events through the event
+  delivery mechanism.
+- **SVC-04.** Receive and execute directed commands from its input, distinguishing
+  admission, domain-level acceptance of a task, and execution outcome.
+- **SVC-05.** Own its operations' deadlines and outcomes. For an accepted finite
+  task, provide the outcome specified by its contract, including failure,
+  cancellation, supersession, or expiration of its own deadline.
+  For continuous control, define target-update and termination conditions.
 
-Ограничения:
+Constraints:
 
-- **SVC-06.** Не принимать общесистемные решения режима или сценария, принадлежащие
-  Activity. Внутренние подсистемные решения остаются у Service.
-- **SVC-07.** Не обращаться к внутренностям другого Service и не исполнять его
-  обработчики напрямую. Межкомпонентное взаимодействие использует объявленные
-  командные, событийные и state-контракты.
-- **SVC-08.** Не хранить общее изменяемое знание как разрозненные детали собственной
-  реализации, доступ к которым требует зависимости от поведения Service.
-  Для такого знания предназначен самостоятельный контракт Controller/State.
-- **SVC-09.** Не переносить свою ответственность за операцию на наблюдателя,
-  транспортный ingress или оркестратор.
+- **SVC-06.** Do not make system-wide mode or scenario decisions owned by an
+  Activity. Internal subsystem decisions remain with the Service.
+- **SVC-07.** Do not access another Service's internals or execute its handlers
+  directly. Inter-component interaction uses declared command, event, and
+  state contracts.
+- **SVC-08.** Do not scatter shared mutable knowledge across implementation details
+  whose access requires a dependency on Service behavior. Such knowledge belongs
+  behind an independent Controller/State contract.
+- **SVC-09.** Do not transfer responsibility for an operation to an observer,
+  transport ingress, or orchestrator.
 
 <a id="role-state"></a>
 ### Controller / Shared State
 
-Controller/State — thread-safe каноническое хранилище общего знания.
-Для факта, такого как уровень батареи, состояние Wi-Fi или последняя известная
-позиция, определены одно авторитетное представление и область его актуальности.
-Независимые mutable-поля разных сервисов не могут конкурировать за эту роль.
+Controller/State is a thread-safe canonical store of shared knowledge.
+A fact such as battery level, Wi-Fi status, or last known position has one
+authoritative representation and a defined scope of validity.
+Independent mutable fields in different services must not compete for this role.
 
-Ответственности:
+Responsibilities:
 
-- **STATE-01.** Предоставлять контролируемый, thread-safe write API разрешённым
-  владельцам данных. Владение записью и границы согласованности объявляются явно.
-- **STATE-02.** Предоставлять thread-safe snapshot/read API Activity, Service
-  и другим разрешённым потребителям.
-- **STATE-03.** Защищать внутренние данные необходимой синхронизацией:
-  mutex, atomics либо эквивалентным механизмом, соответствующим модели доступа.
-- **STATE-04.** Иметь самостоятельный контракт хранения, чтения и обновления,
-  отделённый от поведения Service/Activity. Владение объектом State по lifetime
-  не разрешает потребителям обращаться к внутренностям поведенческого владельца.
+- **STATE-01.** Provide a controlled, thread-safe write API to authorized data
+  owners. Declare write ownership and consistency boundaries explicitly.
+- **STATE-02.** Provide a thread-safe snapshot/read API to Activities, Services,
+  and other authorized consumers.
+- **STATE-03.** Protect internal data using the required synchronization:
+  mutexes, atomics, or an equivalent mechanism appropriate to the access model.
+- **STATE-04.** Expose an independent storage, read, and update contract separated
+  from Service/Activity behavior. Lifetime ownership of a State object does not
+  authorize consumers to access its behavioral owner's internals.
 
-Ограничения:
+Constraints:
 
-- **STATE-05.** Не содержать предметную логику выбора целей, действий подсистемы
-  или сценарных реакций. Проверка целостности данных и соблюдение объявленных
-  правил хранения относятся к ответственности хранилища.
-- **STATE-06.** Не публиковать события, не отправлять команды и не вызывать
-  поведенческие обработчики. Решение об уведомлении принимает владелец поведения.
-- **STATE-07.** Не иметь собственной задачи или автономного цикла поведения.
-- **STATE-08.** Не выдавать произвольные изменяемые ссылки на внутреннее хранилище
-  в обход write API и правил синхронизации.
+- **STATE-05.** Do not contain business logic for choosing goals, subsystem actions,
+  or scenario reactions. Data-integrity checks and enforcement of declared
+  storage rules are the store's responsibility.
+- **STATE-06.** Do not publish events, send commands, or invoke behavioral handlers.
+  The behavior owner decides whether to notify others.
+- **STATE-07.** Do not own a task or an autonomous behavior loop.
+- **STATE-08.** Do not expose arbitrary mutable references to internal storage
+  outside the write API and synchronization rules.
 
 <a id="role-coordinator"></a>
-### Coordinator / корень композиции
+### Coordinator / composition root
 
-Coordinator — корень построения и bootstrap одного экземпляра Raven.
-Он владеет графом объектов и местом определения межкомпонентных связей.
-Создание внутренних частей может быть делегировано составному компоненту,
-но lifetime и связи остаются определёнными композицией.
+Coordinator is the construction and bootstrap root of one Raven instance.
+It owns the object graph and the definition of inter-component connections.
+Construction of internal parts may be delegated to a composite component, but
+lifetime and connections remain defined by composition.
 
-Ответственности:
+Responsibilities:
 
-- **ROOT-01.** Обеспечивать необходимую инициализацию платформы, включая системный
-  event loop там, где backend в нём нуждается; платформенные детали делегируются
-  соответствующему слою.
-- **ROOT-02.** Создавать канонические State-хранилища и определять их lifetime.
-- **ROOT-03.** Создавать Service, явно передавая необходимые State и provider-контракты.
-- **ROOT-04.** Создавать Activity и внедрять необходимые сервисные и state-контракты.
-- **ROOT-05.** Обеспечивать регистрацию подписок, адресных входов и маршрутов
-  до их конкурентного использования. Компонент может объявлять входной контракт
-  при построении; соединение компонентов определяется композицией.
-- **ROOT-06.** Запускать владельцев и адаптеры в порядке, обеспечивающем корректные
-  зависимости, lifetime и admission.
-- **ROOT-07.** Предоставлять graceful shutdown runtime: прекращение нового входа,
-  согласованное завершение владельцев по их контрактам и освобождение ресурсов
-  после окончания их использования. Закрытие одного соединения не заменяет
-  завершение всей композиции.
+- **ROOT-01.** Ensure the required platform initialization, including a system
+  event loop where the backend requires one; delegate platform details to the
+  appropriate layer.
+- **ROOT-02.** Construct canonical State stores and define their lifetimes.
+- **ROOT-03.** Construct Services, explicitly injecting required State and provider contracts.
+- **ROOT-04.** Construct Activities and inject required service and state contracts.
+- **ROOT-05.** Ensure subscriptions, addressed inputs, and routes are registered
+  before concurrent use. A component may declare its input contract during
+  construction; composition determines how components are connected.
+- **ROOT-06.** Start owners and adapters in an order that ensures correct
+  dependencies, lifetimes, and admission.
+- **ROOT-07.** Provide graceful runtime shutdown: stop new ingress, coordinate
+  owner termination according to their contracts, and release resources after
+  their users have finished. Closing a single connection does not replace
+  shutdown of the entire composition.
 
-Ограничения:
+Constraints:
 
-- **ROOT-08.** Не содержать оперативную предметную логику и не принимать решения
-  сценариев; он связывает и запускает владельцев этой логики.
-- **ROOT-09.** Не допускать независимого повторного построения или запуска того же
-  экземпляра runtime из разных мест. У экземпляра один корень композиции;
-  entry point определяется backend, например app_main на ESP.
+- **ROOT-08.** Do not contain operational business logic or make scenario
+  decisions; the root wires and starts the owners of that logic.
+- **ROOT-09.** Do not allow independent reconstruction or startup of the same
+  runtime instance from different locations. An instance has one composition
+  root; the backend defines its entry point, such as app_main on ESP.
 
 <a id="role-delivery"></a>
-### Событийная доставка / Event Bus / Dispatcher
+### Event delivery / Event Bus / Dispatcher
 
-Это роль связи между владельцами, отделяющая производителей сообщений от
-исполнения потребителей. Event Bus описывает событийную публикацию и подписки;
-Dispatcher — выбор адресатов и admission. Они могут использовать общую основу,
-но адресная отправка сама по себе не устанавливает полный контракт broadcast.
-Привязка к SDK event loop не входит в определение этой роли.
+This role connects owners while separating message producers from consumer
+execution. Event Bus describes event publication and subscriptions; Dispatcher
+describes recipient selection and admission. They may share an implementation,
+but addressed delivery alone does not establish a full broadcast contract.
+An SDK event-loop binding is not part of this role's definition.
 
-Ответственности:
+Responsibilities:
 
-- **DEL-01.** Доставлять типизированное событие всем зарегистрированным для него
-  подписчикам с явным результатом admission каждого адресата. Ни один подписчик
-  не может быть молча исключён из предназначенного ему fan-out.
-- **DEL-02.** Переносить направленную команду к установленному владельцу.
-  Доставка может проходить через диспетчер либо заранее связанный адресный
-  вход очереди, если тот является частью объявленного маршрута и сохраняет
-  все проверки и политики admission. Произвольный доступ к чужому Inbox
-  не является разрешением обойти установленный контракт.
-- **DEL-03.** Развязывать поведение производителей и потребителей через
-  контракты сообщений и настройку маршрутов. Добавление потребителя меняет
-  композицию/подписки, не требует знания его реализации производителем.
-- **DEL-04.** Не выполнять обработчики получателей при admission.
-  Для fan-out результат отражается по адресатам; частичный отказ не откатывает
-  уже состоявшийся приём и не маскируется общим успехом.
+- **DEL-01.** Deliver a typed event to all subscribers registered for it, with an
+  explicit admission result for each recipient. No subscriber may be silently
+  excluded from its intended fan-out.
+- **DEL-02.** Carry a directed command to the designated owner. Delivery may use
+  a dispatcher or a prebound addressed queue input if that input is part of the
+  declared route and preserves all admission checks and policies. Arbitrary
+  access to another owner's Inbox does not authorize bypassing the contract.
+- **DEL-03.** Decouple producer and consumer behavior through message contracts
+  and route configuration. Adding a consumer changes composition/subscriptions
+  without requiring the producer to know the consumer's implementation.
+- **DEL-04.** Do not execute recipient handlers during admission. Fan-out reports
+  results per recipient; partial rejection neither rolls back an already accepted
+  delivery nor masquerades as overall success.
 
-Ограничения:
+Constraints:
 
-- **DEL-05.** Не использовать сообщения для совместного владения большими mutable
-  структурами. Общее изменяемое знание читается через State; payload доставки
-  подчинён A08.
-- **DEL-06.** Не исполнять business logic в event callback. Callback выполняет
-  ограниченное сохранение входа и доставку владельцу, затем возвращается.
-- **DEL-07.** Не выводить право на получение сообщения из одной доступности
-  объекта или совпадения размера payload: действует полный семантический
-  и маршрутный контракт A05.
+- **DEL-05.** Do not use messages to share ownership of large mutable structures.
+  Shared mutable knowledge is read through State; delivered payloads obey A08.
+- **DEL-06.** Do not execute business logic in an event callback. A callback performs
+  bounded input preservation and delivery to the owner, then returns.
+- **DEL-07.** Do not infer permission to receive a message from object availability
+  or matching payload size alone: the full semantic and routing contract in A05
+  applies.
 
 <a id="role-adapter"></a>
-### Внешние адаптеры
+### External adapters
 
-Адаптер владеет переводом представлений и техническим состоянием внешней границы.
-Он зависит от внешнего протокола, объявленных семантических контрактов,
-маршрутизации и необходимых платформенных интерфейсов.
-Он не получает права управлять внутренним поведением Service/Activity.
+An adapter owns representation translation and the external boundary's technical
+state. It depends on the external protocol, declared semantic contracts, routing,
+and required platform interfaces. It does not gain authority to control internal
+Service/Activity behavior.
 
-- **ADP-01.** Собирать, проверять и декодировать вход; переводить его в известное
-  сообщение и выполнять установленный admission без ожидания предметного исполнения.
-- **ADP-02.** Принимать исходящие семантические сообщения через объявленный вход,
-  кодировать и передавать их внешнему участнику. Исходящий адаптер не выбирает
-  предметные цели, повторы операции или её итог.
-- **ADP-03.** Изолировать wire layout, framing, транспортные ресурсы и их lifetime
-  от поведенческой модели. Чтение State для внешнего представления подчиняется
-  тому же snapshot-контракту, что и чтение другими потребителями.
+- **ADP-01.** Assemble, validate, and decode input; translate it into a known
+  message and perform established admission without waiting for domain execution.
+- **ADP-02.** Accept outbound semantic messages through a declared input, encode
+  them, and transmit them to the external participant. An outbound adapter does
+  not choose domain goals, operation retries, or operation outcomes.
+- **ADP-03.** Isolate wire layout, framing, transport resources, and their lifetimes
+  from the behavioral model. State reads for external representation obey the
+  same snapshot contract as reads by other consumers.
 
 <a id="role-platform"></a>
-### Исполнительный backend и providers
+### Execution backend and providers
 
-Backend размещает владельцев, обеспечивает периодическое обслуживание и
-ожидание входа. Providers реализуют аппаратные или синтетические зависимости.
-Их интерфейсы определяются требуемыми возможностями, а реализации могут
-использовать SDK, RTOS, драйверы и системные ресурсы.
+A backend places owners, provides periodic servicing, and waits for input.
+Providers implement hardware or synthetic dependencies. Their interfaces are
+defined by required capabilities; implementations may use SDKs, an RTOS,
+drivers, and system resources.
 
-- **PLAT-01.** Обеспечивать назначенный owner context, последовательность обработчиков,
-  безопасную доставку и объявленные временные свойства.
-- **PLAT-02.** Владеть техническими ресурсами платформы и их lifecycle; не переносить
-  SDK-типы и правила управления ресурсом в предметную логику.
-- **PLAT-03.** Сохранять provider-контракт при использовании hardware, mock,
-  simulation, synthetic input или replay.
-- **PLAT-04.** Сохранять callbacks ограниченными по работе; платформенная обработка
-  не должна превращаться в исполнение поведения чужого владельца.
+- **PLAT-01.** Provide the assigned owner context, handler sequencing, safe
+  delivery, and declared timing properties.
+- **PLAT-02.** Own technical platform resources and their lifecycles; do not leak
+  SDK types or resource-management rules into business logic.
+- **PLAT-03.** Preserve the provider contract with hardware, mocks, simulation,
+  synthetic input, or replay.
+- **PLAT-04.** Keep callback work bounded; platform processing must not become
+  execution of another owner's behavior.
 
 <a id="dependencies"></a>
-## Границы зависимостей и владения
+## Dependency and ownership boundaries
 
-| Роль | Разрешённые зависимости по ответственности | Запрещённая связанность |
+| Role | Dependencies permitted by responsibility | Prohibited coupling |
 |---|---|---|
-| Activity | Сервисные командные контракты, State snapshots, события, исполнительные входы и время | Драйверы, сокеты, внутренности Service, запись чужого State |
-| Service | Provider-контракты своей подсистемы, разрешённый State API, сообщения и доставка, время | Внутренности другого Service, прямое исполнение чужих handlers, присвоение общесистемной оркестрации |
-| State | Типы данных, правила хранения и средства синхронизации | Поведенческие обработчики, отправка команд/событий, собственный исполнитель |
-| Доставка | Контракты сообщений, подписки, маршруты, входы получателей | Предметные решения получателя и выполнение их при admission |
-| Адаптер | Внешний протокол, семантические контракты, доставка, разрешённые snapshots, платформенные интерфейсы | Обход владельца поведения или подмена его State |
-| Backend/provider | Контракты размещения/возможностей, SDK и технические ресурсы | Определение предметной политики Activity/Service |
-| Корень композиции | Конструируемые объекты, конфигурация, lifecycle и соединение контрактов | Оперативное поведение системы |
+| Activity | Service command contracts, State snapshots, events, execution inputs, and time | Drivers, sockets, Service internals, writes to another owner's State |
+| Service | Its subsystem's provider contracts, authorized State API, messages and delivery, time | Another Service's internals, direct execution of foreign handlers, assuming system-wide orchestration |
+| State | Data types, storage rules, and synchronization | Behavioral handlers, command/event publication, its own executor |
+| Delivery | Message contracts, subscriptions, routes, recipient inputs | Recipient domain decisions or their execution during admission |
+| Adapter | External protocol, semantic contracts, delivery, permitted snapshots, platform interfaces | Bypassing a behavior owner or replacing its State |
+| Backend/provider | Placement/capability contracts, SDK, and technical resources | Defining Activity/Service domain policy |
+| Composition root | Constructed objects, configuration, lifecycle, and contract wiring | Operational system behavior |
 
-Владение поведением, право обновлять State, владение объектом по lifetime
-и владение контекстом исполнения — разные отношения и должны быть определены
-отдельно. Инъекция ссылки не передаёт автоматически чужую ответственность.
+Behavior ownership, permission to update State, lifetime ownership of an object,
+and ownership of an execution context are distinct relationships and must be
+defined separately. Injecting a reference does not automatically transfer another
+owner's responsibility.
 
-Публичный фасад команды может выражать семантический API и выполнить admission.
-Он не должен синхронно запускать чужую предметную обработку, обходить маршрут
-или раскрывать изменяемые внутренности владельца. Межсервисное взаимодействие
-оценивается по этим контрактам, а не только по видимости метода в языке.
-Чтение общего знания зависит от State API, не от реализации поведения сервиса.
+A public command facade may express a semantic API and perform admission.
+It must not synchronously execute another owner's business logic, bypass a route,
+or expose the owner's mutable internals. Service interaction is assessed against
+these contracts, not merely against method visibility in the programming language.
+Reading shared knowledge depends on a State API, not on a service's behavioral implementation.
 
 <a id="interaction"></a>
-## Семантика взаимодействия
+## Interaction semantics
 
-### Факты, намерения и состояние
+### Facts, intent, and state
 
-Событие сообщает установленный факт. Команда выражает направленное намерение
-получить действие от владельца. Запрос чтения получает знание через разрешённый
-контракт. Направленность или broadcast не заменяют это семантическое различие.
+An event reports an established fact. A command expresses directed intent to
+obtain an action from an owner. A read request obtains knowledge through a
+permitted contract. Addressing or broadcast does not replace this semantic distinction.
 
-Событие может побудить потребителя прочитать State, но само не становится вторым
-mutable-источником истины. Журнал сохраняет диагностические записи; он не заменяет
-канонический State или обязательную доставку события поведенческим подписчикам.
+An event may prompt a consumer to read State, but does not become a second mutable
+source of truth. A journal stores diagnostic records; it does not replace canonical
+State or mandatory event delivery to behavioral subscribers.
 
 <a id="admission-execution"></a>
-### Доставка, admission и исполнение
+### Delivery, admission, and execution
 
-Попытка локального admission имеет непосредственный результат: вход принял
-принадлежащие доставке данные либо отказал с определённой причиной. Она не ждёт
-вызова предметного обработчика и не утверждает, что работа началась или завершена.
+A local admission attempt has an immediate result: the input accepts data owned
+by delivery or rejects it with a defined reason. It does not wait for a domain
+handler to run and does not claim that work has started or finished.
 
-Протокольный ACK/NACK описывает именно согласованную стадию admission.
-Он не является результатом физического действия и не совпадает с подтверждением
-пакета нижележащим транспортом. Семантический результат операции принадлежит
-исполнителю и наблюдается через State или иной предусмотренный им контракт ответа.
-Отдельный push результата и ACK получения результата не обязательны для всех операций.
+Protocol ACK/NACK describes the agreed admission stage. It is not the outcome
+of a physical action and is not equivalent to a lower transport's packet
+acknowledgment. An operation's semantic outcome belongs to its executor and is
+observed through State or another response contract provided by that executor.
+A separate result push and acknowledgment of result receipt are not mandatory for all operations.
 
-Владелец определяет срок конечной операции и гарантируемый исход своего API.
-Activity доверяет этому контракту, наблюдает результат и выбирает дальнейший
-сценарий. Потеря связи с наблюдателем не означает автоматически неуспех или отмену
-уже принятой подсистемной работы.
+The owner defines a finite operation's deadline and its API's guaranteed outcome.
+An Activity trusts that contract, observes the result, and chooses the next scenario
+step. Losing contact with an observer does not automatically imply failure or
+cancellation of already accepted subsystem work.
 
 <a id="owner-execution"></a>
-### Сообщения, callbacks и время
+### Messages, callbacks, and time
 
-Обработчики поведения одного владельца исполняются последовательно.
-Синхронизированное чтение State другими контекстами не даёт им право вызывать
-поведенческие обработчики. Callback сохраняет необходимые данные до истечения
-их внешнего lifetime и передаёт вход владельцу.
+One owner's behavioral handlers execute sequentially. Synchronized State reads
+from other contexts do not authorize those contexts to call behavioral handlers.
+A callback preserves required data before its external lifetime expires and
+forwards input to the owner.
 
-Поток сообщений не должен бесконечно вытеснять предусмотренное контрактом
-периодическое обслуживание. Контракт backend определяет scheduling, обработку
-пропущенных периодов и способ ожидания. Контракт владельца определяет допустимую
-работу обработчика и реакцию на deadlines, новые цели и критические сообщения.
-Длительность физического процесса не равна длительности вызова обработчика.
+A message stream must not indefinitely displace contractually required periodic
+servicing. The backend contract defines scheduling, missed-period handling, and
+waiting mechanisms. The owner contract defines permissible handler work and
+reactions to deadlines, new goals, and critical messages. The duration of a
+physical process is not the duration of a handler call.
 
 <a id="delivery-policies"></a>
-### Очерёдность, актуальная цель и критичность
+### Ordering, current targets, and criticality
 
-Политика доставки определяется известным локальным контрактом:
+Delivery policy is determined by a known local contract:
 
-- Ordered сохраняет последовательность отдельных принятых сообщений;
-- Latest допускает замену необработанного значения более актуальным только там,
-  где это разрешено семантикой;
-- Critical имеет safety-critical смысл и предусмотренный приоритет admission
-  и обслуживания. Если контракт допускает coalescing, замена сохраняет его гарантии.
+- Ordered preserves the sequence of individual accepted messages;
+- Latest permits replacement of an unhandled value with a newer value only where
+  semantics allow it;
+- Critical has safety-critical meaning and a defined admission and servicing
+  priority. If the contract permits coalescing, replacement preserves its guarantees.
 
-ACK/NACK, обычная диагностика и желание ускорить ответ не делают сообщение Critical.
-Внешний отправитель не назначает произвольный приоритет в обход локальной политики.
-Критическое сообщение не определяет универсальную предметную реакцию:
-что остановить, отменить или продолжить, решает соответствующий владелец.
-Общий latch, Reset или reboot не следуют автоматически из факта критичности.
+ACK/NACK, ordinary diagnostics, and a desire for a faster response do not make a
+message Critical. An external sender cannot assign arbitrary priority outside local
+policy. A critical message does not define a universal domain reaction: the relevant
+owner decides what to stop, cancel, or continue. A shared latch, Reset, or reboot
+does not follow automatically from criticality.
 
-Новая цель, отмена, вытеснение и несовместимые запросы имеют правила в контракте
-сервиса. Очередь или оркестратор не угадывают эти правила по времени прихода.
+New targets, cancellation, supersession, and incompatible requests have rules in
+the service contract. Neither the queue nor the orchestrator guesses those rules
+from arrival times.
 
 <a id="communication-extension"></a>
-## Межустройственная коммуникация
+## Inter-device communication
 
-Коммуникация расширяет взаимодействие Raven через границы устройств, сохраняя
-роли, State и локальное владение поведением. Она не устанавливает отдельную
-поведенческую модель для сетевых запросов.
+Communication extends Raven interaction across device boundaries while preserving
+roles, State, and local behavior ownership. It does not establish a separate
+behavioral model for network requests.
 
-- **COM-01.** Каждый экземпляр Raven имеет локальные входы и маршрутизацию.
-  Удалённое устройство не получает прямой доступ к Inbox, памяти или обработчику
-  другого экземпляра. Общий wire-язык описывает устройства и семантические
-  контракты, не сериализует внутреннее устройство runtime.
-- **COM-02.** Ingress завершает сборку, валидацию, перевод и admission; затем
-  продолжает принимать вход. Он не ждёт предметного исполнения. Требуемое
-  подтверждение admission проходит через установленный исходящий контракт.
-- **COM-03.** Egress принимает сообщения от локальных производителей, кодирует
-  и передаёт их. Владение записью в поток исключает перемешивание кадров;
-  выбор задач и механизм сериализации относятся к backend.
-- **COM-04.** Ресурс соединения имеет определённого владельца lifecycle.
-  Закрытие, незавершённый ввод/вывод и повторное использование ресурса
-  обрабатываются согласованно с ingress, egress и владельцами поведения.
-- **COM-05.** Устройство, экземпляр его запуска, корреляция запроса и локальная
-  ссылка на соединение имеют разные значения. Сообщение, ответ или отложенное
-  завершение предыдущей сессии не может обновлять актуальный State или попадать
-  в новое соединение как действующее. Проверка актуальности защищает сам commit,
-  а не только отправку ответа.
-- **COM-06.** Локальный admission, завершение локальной отправки, удалённый
-  admission и семантический результат — разные стадии. Для каждого deadline
-  определены начало отсчёта, владелец, условия завершения и влияние повторов.
-  Timeout не выдаётся за полученный NACK и не доказывает неуспех удалённой операции.
-- **COM-07.** Семантические повторы, идемпотентность, обработка дубликатов,
-  готовность и keepalive принадлежат соответствующим сервисным контрактам.
-  Они не становятся скрытым поведением общего ingress или byte transport.
-- **COM-08.** State удалённого участника представлен как локально известное
-  наблюдение с необходимой идентичностью и актуальностью. Связность соединения,
-  готовность устройства и исход предметной операции не являются одним фактом.
-  Часы разных устройств не считаются синхронизированными без отдельного контракта.
-- **COM-09.** Ёмкость, admission при перегрузке, судьба pending-данных при закрытии
-  и восстановлении, повторы и наблюдаемость потерь определяются явно.
-  Принятая работа не объявляется отменённой только из-за потери её подтверждения.
-- **COM-10.** Число устройств, транспортных задач и буферов задаётся ресурсным
-  профилем и возможностями backend. Оно не определяет число архитектурных ролей
-  и не требует нового поведения для каждого физического устройства.
-  Изменение профиля требует проверки ресурсов и временных гарантий.
+- **COM-01.** Each Raven instance has local inputs and routing. A remote device
+  does not gain direct access to another instance's Inbox, memory, or handler.
+  The shared wire language describes devices and semantic contracts; it does
+  not serialize runtime internals.
+- **COM-02.** Ingress completes assembly, validation, translation, and admission,
+  then continues receiving input. It does not wait for domain execution. Any
+  required admission receipt uses the established outbound contract.
+- **COM-03.** Egress accepts messages from local producers, encodes, and transmits
+  them. Stream-write ownership prevents frame interleaving; task placement and
+  serialization mechanisms belong to the backend.
+- **COM-04.** A connection resource has a defined lifecycle owner. Closure,
+  unfinished I/O, and resource reuse are coordinated with ingress, egress,
+  and behavior owners.
+- **COM-05.** Device identity, boot instance, request correlation, and a local
+  connection reference have distinct meanings. A message, response, or deferred
+  completion from a previous session must not update current State or enter a
+  new connection as valid. Validity checks protect the commit itself, not only
+  response transmission.
+- **COM-06.** Local admission, completion of local transmission, remote admission,
+  and semantic outcome are distinct stages. Every deadline has a defined start,
+  owner, completion conditions, and retry effects. A timeout is not presented as
+  a received NACK and does not prove failure of a remote operation.
+- **COM-07.** Semantic retries, idempotency, duplicate handling, readiness, and
+  keepalive belong to the corresponding service contracts. They must not become
+  hidden behavior in general ingress or byte transport.
+- **COM-08.** Remote participant State is represented as a locally known
+  observation with the required identity and validity. Connection availability,
+  device readiness, and domain-operation outcome are not the same fact.
+  Clocks on different devices are not treated as synchronized without a separate contract.
+- **COM-09.** Capacity, overload admission, the fate of pending data on closure
+  and recovery, retries, and loss observability are explicitly defined.
+  Accepted work is not declared canceled merely because its receipt was lost.
+- **COM-10.** The number of devices, transport tasks, and buffers is determined
+  by the resource profile and backend capabilities. It does not define the
+  number of architectural roles or require new behavior for every physical device.
+  Profile changes require resource and timing-guarantee verification.
 
 <a id="invariants"></a>
-## Архитектурные инварианты
+## Architectural invariants
 
-Эти правила обязательны для реализации. Их изменение подчиняется порядку
-архитектурных решений, определённому в начале спецификации.
+These rules are mandatory for implementations. Changes follow the architectural
+decision process defined at the beginning of this specification.
 
-1. **INV-01 — единый State.** Общее знание имеет каноническое хранилище и
-   контролируемые пути записи. Snapshots не становятся конкурирующими mutable
-   источниками истины.
-2. **INV-02 — факт и намерение различаются.** Событие сообщает факт, команда
-   направляет намерение владельцу; вид доставки не подменяет эту семантику.
-3. **INV-03 — оркестрация отделена от исполнения.** Activity не управляет
-   hardware напрямую; Service не присваивает общесистемные решения режима.
-4. **INV-04 — callbacks остаются тонкими.** Callback исполняется в контексте
-   источника; предметная работа переносится во вход и контекст владельца.
-5. **INV-05 — поведение исполняется владельцем.** Контекст и сериализация
-   обработчиков определены явно. Это исключает произвольное исполнение на
-   чужом стеке и неожиданную реентерабельность через доставку.
-   Достаточность стеков, приоритеты и свойства блокировок проверяются отдельно.
-6. **INV-06 — задача не требуется каждому классу.** Отдельный исполнитель
-   обосновывается необходимостью независимой работы, ожидания I/O, периодической
-   выборки или обслуживания входа. Учитываются стоимость памяти и scheduling;
-   State собственной задачи не имеет.
-7. **INV-07 — явная основа предпочтительнее преждевременного framework.**
-   Зависимости и wiring задаются явно. Универсальные DI containers, динамические
-   реестры и locators сервисов, тяжёлые template-механизмы не вводятся без
-   конкретной потребности и оценки более простого решения.
+1. **INV-01 — a single State authority.** Shared knowledge has a canonical store
+   and controlled write paths. Snapshots do not become competing mutable sources
+   of truth.
+2. **INV-02 — facts and intent are distinct.** Events report facts; commands direct
+   intent to an owner. The delivery form does not replace these semantics.
+3. **INV-03 — orchestration is separate from execution.** Activities do not drive
+   hardware directly; Services do not assume system-wide mode decisions.
+4. **INV-04 — callbacks remain thin.** A callback runs in its source's context;
+   domain work is forwarded to the owner's input and execution context.
+5. **INV-05 — behavior executes in owner context.** Context and handler sequencing
+   are explicitly defined. This excludes arbitrary execution on a foreign stack
+   and unexpected reentrancy through delivery. Stack sufficiency, priorities,
+   and locking properties require separate verification.
+6. **INV-06 — not every class needs a task.** A separate executor is justified by
+   the need for independent work, I/O waiting, periodic sampling, or input
+   servicing. Memory and scheduling costs are considered; State has no task
+   of its own.
+7. **INV-07 — an explicit foundation precedes premature framework complexity.**
+   Dependencies and wiring are explicit. Generic DI containers, dynamic service
+   registries and locators, and heavy template mechanisms are not introduced
+   without a concrete need and evaluation of a simpler solution.
 
 <a id="role-interactions"></a>
-## Связи между ролями
+## Role interactions
 
 ```mermaid
 flowchart TB
-    Activity["Activity · сценарий / режим"]
-    Service["Service · работа подсистемы"]
-    Delivery["События / направленные команды · admission"]
-    State["Controller / State · snapshots · без задачи"]
-    Adapter["Внешний семантический адаптер"]
+    Activity["Activity · scenario / mode"]
+    Service["Service · subsystem work"]
+    Delivery["Events / directed commands · admission"]
+    State["Controller / State · snapshots · no task"]
+    Adapter["External semantic adapter"]
     Provider["Provider · hardware / simulation / replay"]
-    Execution["Backend · контексты владельцев / tick"]
-    Root["Coordinator · композиция / lifecycle"]
+    Execution["Backend · owner contexts / tick"]
+    Root["Coordinator · composition / lifecycle"]
 
-    Activity -->|направленные команды| Delivery
-    Service -->|факты и предусмотренные сообщения| Delivery
-    Delivery -->|объявленный вход владельца| Activity
-    Delivery -->|объявленный вход владельца| Service
-    State -->|согласованные snapshots| Activity
-    State -->|согласованные snapshots| Service
-    Service -->|разрешённое обновление| State
-    Activity -->|публикация собственного состояния сценария| State
-    Provider -->|контракт возможностей и данных| Service
-    Service -->|подсистемные действия| Provider
-    Adapter <-->|семантические сообщения| Delivery
-    Execution -.->|размещает исполнение| Activity
-    Execution -.->|размещает исполнение| Service
-    Root -.->|создаёт и связывает| Activity
-    Root -.->|создаёт и связывает| Service
-    Root -.->|владеет lifetime| State
-    Root -.->|настраивает маршруты| Delivery
-    Root -.->|связывает границы| Adapter
-    Root -.->|выбирает и запускает backend| Execution
-    Root -.->|выбирает реализацию| Provider
+    Activity -->|directed commands| Delivery
+    Service -->|facts and defined messages| Delivery
+    Delivery -->|declared owner input| Activity
+    Delivery -->|declared owner input| Service
+    State -->|consistent snapshots| Activity
+    State -->|consistent snapshots| Service
+    Service -->|authorized update| State
+    Activity -->|publish own scenario state| State
+    Provider -->|capability and data contract| Service
+    Service -->|subsystem actions| Provider
+    Adapter <-->|semantic messages| Delivery
+    Execution -.->|hosts execution| Activity
+    Execution -.->|hosts execution| Service
+    Root -.->|constructs and wires| Activity
+    Root -.->|constructs and wires| Service
+    Root -.->|owns lifetime| State
+    Root -.->|configures routes| Delivery
+    Root -.->|wires boundaries| Adapter
+    Root -.->|selects and starts backend| Execution
+    Root -.->|selects implementation| Provider
 ```
 
-Стрелки доставки означают admission во вход владельца, а не синхронный вызов
-его предметного обработчика. Потребители событий определяются подписками.
-State остаётся thread-safe источником истины без собственной задачи и без
-публикации событий. Все связи и lifetime определяются корнем композиции.
+Delivery arrows mean admission into an owner's input, not synchronous invocation
+of its domain handler. Subscriptions determine event consumers.
+State remains a thread-safe source of truth without its own task or event
+publication. The composition root defines every connection and lifetime.
 
-Технические материалы: [коммуникационная реализация](communication-architecture.md),
-[wire-контракт и временные правила обмена](communication.md).
-Они описывают конкретные механизмы и не переопределяют требования этой спецификации.
+Technical references: [communication implementation](communication-architecture.md),
+[wire contract and exchange timing rules](communication.md).
+They describe concrete mechanisms and do not override this specification's requirements.

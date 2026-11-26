@@ -1,28 +1,35 @@
-# LITU / Raven: точка входа для агента
+# LITU / Raven: agent entry point
 
-Перед содержательной работой прочитай [Handoff/README.md](Handoff/README.md). Там сохранены контекст сотрудничества и карта актуальной документации. Затем проверь текущие Git-состояние и запрос пользователя: handoff описывает контекст, а не выдаёт новые поручения и не заменяет архитектурную спецификацию.
+Before substantive work, read [Handoff/README.md](Handoff/README.md). It preserves collaboration context and a map of the current documentation. Then check the current Git state and the user's request: the handoff supplies context, not new assignments, and does not replace the architectural specification.
 
-## Как работать с Ильёй
+## Working with Ilya
 
-- Илья часто думает вслух и передаёт общий замысел через примеры. Извлекай из примера свойство системы; не превращай его предметную область, конкретные классы или механизмы в требования без основания.
-- Принимай обоснованные инженерные решения самостоятельно в пределах текущей задачи. Существенные допущения обозначай коротко. Уточняй только вопросы, которые действительно меняют цель или контракт; не согласовывай каждую техническую деталь.
-- Смело оспаривай предложения с конкретным обоснованием. Не подменяй обсуждение архитектуры повторным объяснением базовых ограничений RTOS и железа; поднимай их там, где они влияют на обсуждаемый контракт.
-- Разделяй требования пользователя, своё предложение и уже реализованное поведение. Не выдавай предположение за согласованное решение.
-- Общайся по-русски, прямо и естественно. За выполнение разрешённой задачи отвечай целиком: реализация, необходимые проверки и понятный результат.
+- Ilya often thinks aloud and conveys intent through examples. Extract the system property from an example; do not turn its domain, specific classes, or mechanisms into requirements without a reason.
+- Make justified engineering decisions independently within the current task. State significant assumptions briefly. Ask only about questions that materially change the goal or contract; do not seek agreement on every technical detail.
+- Challenge proposals with concrete reasoning. Do not replace architectural discussion with repeated explanations of basic RTOS and hardware limitations; raise them where they affect the contract under discussion.
+- Distinguish user requirements, your proposals, and implemented behavior. Do not present an assumption as an agreed decision.
+- Communicate with Ilya in Russian, directly and naturally. Take responsibility for the entire authorized task: implementation, necessary verification, and a clear result.
 
-## Границы текущего R&D
+## Repository language
 
-- Общая модель Raven важнее конкретного демо. Руки, духовка, навигация и выгрузка файлов иллюстрируют свойства системы; MSP и виртуальные приводы служат примерами реализации.
-- Не смешивай доставку сообщения, протокольный ACK/NACK и исполнение операции. Общие контракты определены в [архитектурной спецификации Raven](ESP/docs/architecture.md).
-- В текущем направлении iOS-код не меняется без отдельной задачи. Прежняя совместимость на стороне ESP удалена; будущий iOS-протокол планируется отдельно.
-- Базовая ветка направления — `dev_rnd`; рабочие ветки и PR адресуются ей. В `main` это направление не сливается без нового явного решения пользователя.
-- Перед записью проверяй текущую ветку и чужие изменения. При работе нескольких чатов не переключай их общую рабочую копию и не затрагивай чужую работу без необходимости и согласованного основания.
+- English is the required language for all repository-authored text: documentation, READMEs, ADRs, diagrams, agent instructions, code comments, and diagnostic or user-facing messages. Use English for commit messages and pull request descriptions as well.
+- The conversation may be in Russian. The conversation's language does not determine the language of repository artifacts.
+- Preserve identifiers, commands, protocol literals, links, measurements, and immutable source material exactly where their contracts require it. A translation must not silently change an architectural rule or a recorded result.
+- A language rule does not expand task authorization: when only documentation changes are authorized, do not edit source code or tests to perform language cleanup.
 
-## Документация и проверки
+## Current R&D boundaries
 
-- Нормативная архитектурная спецификация — [ESP/docs/architecture.md](ESP/docs/architecture.md). Не подгоняй её под текущий код: отклонение реализации не изменяет правило. Техническое описание коммуникации ведётся отдельно в [communication-architecture.md](ESP/docs/communication-architecture.md).
-- [Архитектурный baseline](ESP/docs/architecture-baseline-02dd622.md) — неизменяемая побайтная копия `02dd622:ESP/raven/docs/architecture.md`. Не редактируй, не форматируй и не актуализируй её. Происхождение, контрольная сумма и сопоставление с актуальной спецификацией — в [architecture-coverage.md](ESP/docs/architecture-coverage.md).
-- Техническая карта и команды проверки находятся в [ESP/README.md](ESP/README.md) и [validation.md](ESP/docs/validation.md); основания текущего этапа — в [ADR-003](ESP/docs/adr/0003-device-communication.md), контракт доставки/исполнения — в [ADR-001](ESP/docs/adr/0001-delivery-and-execution.md).
-- Проверяй гарантии и поведение, а не только совпадение теста с реализацией. Отдельно обозначай проверку на компьютере, на ESP, через TCP loopback и через реальный iOS-клиент.
-- При изменении существенного контракта или состояния этапа обновляй соответствующую существующую документацию и при необходимости Handoff. Не размножай отчёты на каждый запуск. При одном чтении файлов обновления не нужны.
-- Не утверждай, что сборка, тест, прошивка или PR выполнены, если нет соответствующего подтверждения. Сведения из старого отчёта отделяй от собственной проверки.
+- The general Raven model matters more than any particular demo. Arms, an oven, navigation, and file uploads illustrate system properties; MSP and virtual actuators are implementation examples.
+- Do not conflate message delivery, protocol ACK/NACK, and operation execution. General contracts are defined in the [Raven architectural specification](ESP/docs/architecture.md).
+- Do not change iOS code in this direction without a separate task. Legacy ESP-side compatibility has been removed; a future iOS protocol will be planned separately.
+- The direction's base branch is `dev_rnd`; working branches and PRs target it. Do not merge this direction into `main` without a new explicit user decision.
+- Before writing, check the current branch and other people's changes. When multiple chats share a checkout, do not switch it or interfere with their work without necessity and an agreed basis.
+
+## Documentation and verification
+
+- The normative architectural specification is [ESP/docs/architecture.md](ESP/docs/architecture.md). Do not adjust it to fit current code: an implementation deviation does not change the rule. The technical communication implementation is described separately in [communication-architecture.md](ESP/docs/communication-architecture.md).
+- The [architecture baseline](ESP/docs/architecture-baseline-02dd622.md) is an immutable, byte-identical copy of `02dd622:ESP/raven/docs/architecture.md`. Do not edit, reformat, or update it. Provenance, checksum, and the comparison with the current specification are in [architecture-coverage.md](ESP/docs/architecture-coverage.md).
+- The technical map and verification commands are in [ESP/README.md](ESP/README.md) and [validation.md](ESP/docs/validation.md); the current stage's decisions are in [ADR-003](ESP/docs/adr/0003-device-communication.md), and the delivery/execution contract is in [ADR-001](ESP/docs/adr/0001-delivery-and-execution.md).
+- Verify guarantees and behavior, not merely that a test matches the implementation. Distinguish host verification, ESP verification, TCP loopback, and a real iOS client.
+- When a significant contract or stage status changes, update the relevant existing documentation and, when needed, the handoff. Do not create a separate report for every run. Reading files alone does not require updates.
+- Do not claim a build, test, flash, or PR action succeeded without supporting evidence. Distinguish information from an earlier report from your own verification.

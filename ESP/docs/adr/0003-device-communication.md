@@ -1,54 +1,57 @@
-# ADR-003: устройство, коммуникационная граница и очистка примера
+# ADR-003: Devices, Communication Boundary, and Demo Cleanup
 
-Дата: 2026-11-26. Статус: принято для текущего R&D; заменяет размещение и демо из ADR-002.
+Date: 2026-11-26. Status: accepted for the current R&D; supersedes the layout and demo in ADR-002.
 
-## Контекст
+## Context
 
-Проверить переиспользуемость Raven на нескольких физических ESP без Arm Demo и временного TCP.
-Приём сообщения, протокольный ACK/NACK и исполнение остаются разными контрактами. BLE MC нужен как
-сервисный центр с событийным выводом. Камера и будущий iOS-протокол не входят в этап.
+Validate Raven reuse across multiple physical ESPs without Arm Demo or temporary TCP code.
+Message admission, protocol ACK/NACK, and execution remain separate contracts. MC BLE serves
+as a service console with event-based output. The camera and a future iOS protocol are out of scope.
 
-## Решение
+## Decision
 
-Общие компоненты используются двумя ESP-IDF apps: MC и node. Device-oriented ICD независим от
-Raven Core. RX — платформенная задача; TX — Component + OwnerTask. TcpManager владеет socket
-lifecycle; Session linearizes generation, admission, Peer State commits и I/O leases. PeerService
-владеет handshake/keepalive, retry и сроками своего API. Общий TransactionManager не введён.
+Two ESP-IDF apps, MC and node, use shared components. The device-oriented ICD is independent of
+Raven Core. RX is a platform task; TX is Component + OwnerTask. TcpManager owns socket lifecycle;
+Session linearizes generation, admission, Peer State commits, and I/O leases. PeerService owns
+handshake/keepalive, retries, and its API's deadlines. No general TransactionManager is introduced.
 
-Inbox сохраняет Ordered/Latest/Critical. Critical Ordered не нужен текущим контрактам. Ядро выросло
-только в представлении: payload 24→64 для двух 64-byte typed envelopes, mask 8→16 для девяти endpoint
-IDs MC-профиля. Размеры проверяются на target; memory budget и аппаратные замеры — в validation.md.
+Inbox retains Ordered/Latest/Critical. Current contracts do not require Critical Ordered. Core growth
+is limited to representation: payload 24→64 for two 64-byte typed envelopes, mask 8→16 for the MC
+profile's nine endpoint IDs. Sizes are checked on target; the memory budget and hardware measurements
+are recorded in validation.md.
 
-Масштабирование задаётся ресурсной конфигурацией и возможностями платформы. Число лежащих на столе
-плат не становится архитектурным ограничением. Текущая физическая проверка — четыре устройства,
-проверка MC-профиля — шесть одновременных TCP-сессий.
+Scaling is determined by resource configuration and platform capabilities. The number of boards
+on the desk does not become an architectural limit. Current physical validation uses four devices;
+MC-profile validation uses six concurrent TCP sessions.
 
-Измерение на железе изменило две первоначальные настройки lwIP: ESP-IDF 6.1.1 требует TCP_OVERSIZE
-при SINGLE_PBUF, поэтому ограничение коротких отправок реализовано через queue/write thresholds.
-L2→L3 copy включён после воспроизводимого исчерпания общего Wi-Fi RX pool одним непрочитанным
-сокетом. Дополнительная память учтена явно; изоляция важнее экономии этих буферов.
+Hardware measurements changed two initial lwIP settings: ESP-IDF 6.1.1 requires TCP_OVERSIZE with
+SINGLE_PBUF, so short sends are bounded through queue/write thresholds. L2→L3 copy was enabled after
+one unread socket reproducibly exhausted the shared Wi-Fi RX pool. Additional memory is explicitly
+budgeted; isolation takes precedence over saving those buffers.
 
-## Сознательно удалённые возможности
+## Deliberately removed capabilities
 
-Удаляется весь прежний `ESP/raven`, после переноса актуального ядра, OwnerTask и BLE transport:
+The entire former `ESP/raven` tree is removed after moving the current core, OwnerTask, and BLE transport:
 
-- ArmService, DualArmActivity, SimArmDriver, sensor/operation demo state и специфичные BLE-команды;
-- FC boot mode, Betaflight MSP client/codec, FlightControllerService/State/events, их конфигурации
-  и тесты. **Поддержка MSP/FC в ESP этим решением прекращается**, это не удаление случайно неиспользуемого файла;
-- старые JSON/network header/encoder registry gateways, command/telemetry sockets, UART абстракции,
-  неиспользуемые BaseTask/EventBus/monitor слои, vendored cJSON и устаревшая карта проекта.
+- ArmService, DualArmActivity, SimArmDriver, sensor/operation demo state, and domain-specific BLE commands;
+- FC boot mode, Betaflight MSP client/codec, FlightControllerService/State/events, their configurations,
+  and tests. **This decision ends ESP MSP/FC support**; it is not incidental removal of an unused file;
+- old JSON/network-header/encoder-registry gateways, command/telemetry sockets, UART abstractions,
+  unused BaseTask/EventBus/monitor layers, vendored cJSON, and the obsolete project map.
 
-Модель Service/Activity не удаляется вместе с примером. Новый сценарий оркестрации сможет использовать
-Component, Inbox, Executor и локальный Dispatcher. Возвращение MSP, камеры, UART или связи с iOS
-потребует отдельного предметного/транспортного адаптера под актуальные границы.
+The Service/Activity model is not removed with the example. A new orchestration scenario can use
+Component, Inbox, Executor, and the local Dispatcher. Restoring MSP, camera, UART, or iOS communication
+requires a separate domain/transport adapter following the current boundaries.
 
-iOS-исходники остаются без изменений; ESP не сохраняет прежний iOS wire compatibility. ADR-001/002
-сохранены как история с явной ссылкой на текущую архитектуру, не как параллельная инструкция запуска.
+iOS sources remain unchanged; ESP does not preserve legacy iOS wire compatibility. ADR-001/002
+remain historical records with an explicit reference to the current architecture, not parallel
+instructions for running the application.
 
-## Проверка
+## Verification
 
-Host-сценарии проверяют admission/critical/tick, codec/framing, корреляцию и сроки, stale generations,
-конкурентный close, bounded diagnostics и console parser. Отдельный node test profile проверяет реальный
-MC через Wi-Fi: capacity, duplicate identity, malformed/partial frames, non-reading peer и восстановление.
-Обычные физические node затем проверяются с разным порядком запуска, потерей/возвратом питания и
-перезапуском MC. Актуальные результаты и ограничения фиксируются в [validation.md](../validation.md).
+Host scenarios check admission/critical/tick, codec/framing, correlation and deadlines, stale
+generations, concurrent close, bounded diagnostics, and the console parser. A separate node test
+profile exercises the physical MC over Wi-Fi: capacity, duplicate identity, malformed/partial
+frames, a non-reading peer, and recovery. Ordinary physical nodes are then checked with different
+startup orders, power loss/return, and MC restarts. Current results and limitations are recorded
+in [validation.md](../validation.md).
