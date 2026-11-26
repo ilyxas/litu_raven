@@ -31,16 +31,25 @@ optional diagnostic; SDK Log V1/V2 fragments; transport-independent PacketWriter
 test node подключается к AP и создаёт шесть сессий с явно тестовыми IDs. Автоматически проверяются:
 20 секунд handshake/keepalive всех peers; независимый close/reconnect; duplicate identity без takeover;
 неподдерживаемая версия, плохая length, partial frame deadline; non-reading peer под нагрузкой;
-последующее восстановление всех шести. Отдельно повторяется с подключённой BLE-консолью.
+последующее восстановление всех шести. Проверка здоровых сессий требует свежего keepalive (менее
+3 секунд), а не только открытого fd и прежнего handshake. Отдельно повторяется с подключённой BLE-консолью.
 После теста вернуть `RAVEN_TCP_BOARD_PROBE=n` и обычные node-прошивки.
 
 UART capture не отправляет прикладные команды:
 
 ```powershell
-python ESP/tests/capture_serial.py COM4 COM5 COM6 COM7 --seconds 120 --output .cache/capture
+python ESP/tests/capture_serial.py COM4 COM5 COM6 COM7 --seconds 1835 --output .cache/capture
 # --reset COM5: обычный RTS/EN reset
 # --rom-reset COM4: reset через ROM/esptool для native USB
+python ESP/tests/check_capture.py .cache/capture --mc COM4 --nodes COM5 COM6 COM7 --seconds 1800
 ```
+
+`check_capture.py` исключает первые 20 секунд восстановления, затем требует непрерывных snapshots,
+трёх Ready bindings у MC и одного у каждого node, растущего last_seen, неизменных Boot ID/generation,
+ресурсных порогов и отсутствия reset/watchdog/timeout. Для автоматической остановки/возврата плат есть
+`--actions ESP/tests/four_boards.example.json`: номера COM в этом **стендовом сценарии** нужно изменить
+под конкретное подключение. Он не задаёт список плат приложения. После последнего восстановления
+стабильный интервал проверяется отдельно.
 
 ## Memory budget MC, capacity=6
 
@@ -87,13 +96,16 @@ Wi-Fi static RX/dynamic RX/dynamic TX — по 6. PSRAM не используе�
 | Общие Wi-Fi dynamic TX | 12 288 | 6×2048, Wi-Fi копирует TX |
 | TCP/netconn/mailboxes/allocator | 6 144 | шесть bindings, очереди SDK и metadata |
 | Connect/close transient reserve | 4 096 | параллельные lifecycle-переходы |
-| Итого динамический резерв | 74 752 | не прибавлять Runtime/stack второй раз к уже измеренному heap |
+| Подключённый BLE-клиент | 6 144 | сверх startup radio pools; наблюдавшаяся разница около 4,7 KiB |
+| Итого динамический резерв | 80 896 | не прибавлять Runtime/stack второй раз к уже измеренному heap |
 
-Startup free internal DMA heap 110 692 bytes после радио и application owners. Вычитание всего
-резерва даёт 35 940 bytes; это консервативная оценка для данного ICD/window/profile, а не гарантия
-произвольной нагрузки всей сети. Allocation overhead и фрагментация проверяются на железе по free/min,
-largest block и stack high-water marks. Тестовая monitor task дополнительно расходует свой stack/TCB;
-освобождение app_main stack после startup log, наоборот, возвращает память.
+Startup free internal DMA heap 110 692 bytes после радио и application owners, до test monitor.
+После выхода из `app_main` освобождаются ещё 3584 bytes его стека (`CONFIG_ESP_MAIN_TASK_STACK_SIZE`);
+возвращаемый TCB в запас не засчитываем. Оценка production: 110 692 + 3584 − 80 896 = **33 380 bytes**.
+Это консервативный резерв для данного ICD/window/profile, а не гарантия произвольной нагрузки всей
+сети. Allocation overhead и фрагментация проверяются на железе по free/min, largest block и stack
+high-water marks. Тестовая monitor task дополнительно расходует 3072 bytes стека и TCB; её расход
+входит в аппаратные замеры ниже, но не в production-профиль.
 
 Критерии стенда: минимум 32 KiB internal DMA heap, largest block ≥8 KiB, свободный стек каждого
 application owner и NimBLE host ≥1 KiB. При увеличении capacity проверить эти критерии заново.
@@ -127,7 +139,14 @@ MC закрывает только slow stream с `send-deadline`. SDK `wlanif.c
 - Четыре физические платы первоначально подняли общий handshake: MC `E072A1D72014` (COM4), nodes
   `08A6F76BBA34` (COM5), `246F2836590C` (COM6), ESP32-CAM `D0EF765CC8BC` (после переноса USB — COM7).
   У CAM воспроизводилась потеря serial response, устранявшаяся снятием питания; это отдельное ограничение стенда.
+- Проверены индивидуальные остановки каждого node на 15 секунд и возврат без нарушения остальных связей;
+  остановка/возврат MC при работающих nodes; последовательные перезапуски COM5, COM7, COM6.
+  Каждый вернулся с новым Boot ID, MC переиспользовал слоты с новым generation. Остановки делались
+  удержанием приложения в ROM через esptool; физическое снятие питания CAM дополнительно выполнил пользователь.
 
-Итоговая выдержка четырёх плат, повтор с активным BLE и CI фиксируются здесь после завершения прогона.
+- [CI для 3c9d8fe](https://github.com/ilyxas/litu_raven/actions/runs/45735612546): все шесть jobs прошли —
+  Linux host, ASan/UBSan, TSan; firmware MC ESP32-S3, node ESP32 и node ESP32-S3.
+
+Итоговая выдержка четырёх плат фиксируется здесь после завершения прогона.
 Старые отчёты «25/25 на Arm Demo» не являются проверкой этой реализации. Реального iOS-клиента и UART
 transport в текущем этапе нет; их работоспособность не заявляется.

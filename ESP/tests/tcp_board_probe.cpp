@@ -21,6 +21,7 @@ enum class Behavior { Normal, BadVersion, Partial, InvalidLength, SlowReader };
 struct Client {
     int fd{-1};
     uint64_t identity{}, boot{1};
+    uint64_t last_heartbeat{};
     unsigned hellos{}, heartbeats{};
     bool remote_closed{};
     Behavior behavior{Behavior::Normal};
@@ -38,6 +39,7 @@ struct Client {
         identity = id;
         ++boot;
         hellos = heartbeats = 0;
+        last_heartbeat = 0;
         remote_closed = false;
         behavior = mode;
         reader.reset();
@@ -114,6 +116,7 @@ struct Client {
             if (!self.send(response))
                 return false;
             ++self.heartbeats;
+            self.last_heartbeat = now;
         }
         return true;
     }
@@ -141,8 +144,10 @@ void run_for(uint64_t duration) {
     }
 }
 void healthy(size_t count) {
+    const auto now = now_ms();
     for (size_t i = 0; i < count; ++i)
-        assert(clients[i].fd >= 0 && clients[i].hellos && clients[i].heartbeats);
+        assert(clients[i].fd >= 0 && clients[i].hellos && clients[i].heartbeats &&
+               now - clients[i].last_heartbeat < 3000);
 }
 } // namespace
 void run_tcp_board_probe(WifiNetwork &wifi, uint16_t port) {

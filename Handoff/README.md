@@ -68,7 +68,9 @@ HALT в обсуждении — пример такого сообщения. �
 
 PR #3 слит в `dev_rnd` (base текущей работы `02dd622`). Реализация нового этапа ведётся в отдельном
 worktree `D:/Git/litu_raven_communication`, ветка `codex/device-communication`; исходная общая копия
-не переключалась. Публикация и итоговые проверки сверяются по Git и [validation.md](../ESP/docs/validation.md).
+не переключалась. [PR #4](https://github.com/ilyxas/litu_raven/pull/4) адресован `dev_rnd`.
+Итоговые проверки и ресурсные замеры — в [validation.md](../ESP/docs/validation.md); текущий статус
+PR и ветки всегда сверять по Git/GitHub.
 
 Согласовано: два ESP-IDF apps MC/node с общими Raven-компонентами; device-oriented ICD; отдельные
 TCP RX и TX, один writer на socket; локальный Dispatcher; PeerService владеет handshake/keepalive,
