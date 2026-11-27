@@ -16,5 +16,6 @@ The project is still evolving. Some current components are experimental or scaff
 
 
 For more details, see:
-- [`ESP/raven/docs/`](ESP/raven/docs/)
+- [`ESP/README.md`](ESP/README.md) — shared Raven runtime, MC/node apps and device communication
+- [`ESP/docs/`](ESP/docs/)
 - [`IOS/docs/`](IOS/docs/)

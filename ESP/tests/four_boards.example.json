@@ -1,0 +1,13 @@
+[
+  {"at": 20, "port": "COM5", "action": "hold"},
+  {"at": 35, "port": "COM5", "action": "restart"},
+  {"at": 60, "port": "COM6", "action": "hold"},
+  {"at": 75, "port": "COM6", "action": "restart"},
+  {"at": 100, "port": "COM7", "action": "hold"},
+  {"at": 115, "port": "COM7", "action": "restart"},
+  {"at": 140, "port": "COM4", "action": "hold"},
+  {"at": 155, "port": "COM4", "action": "restart"},
+  {"at": 185, "port": "COM5", "action": "restart"},
+  {"at": 195, "port": "COM7", "action": "restart"},
+  {"at": 205, "port": "COM6", "action": "restart"}
+]

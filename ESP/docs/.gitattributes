@@ -1,0 +1,2 @@
+# Preserve the immutable architecture baseline byte-for-byte, including LF.
+/architecture-baseline-02dd622.md -text
