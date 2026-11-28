@@ -1,6 +1,6 @@
 # LITU / Raven: Continuation Context
 
-Updated: November 26, 2026.
+Updated: November 28, 2026.
 
 This is the entry point after an extended architectural discussion. It preserves the meaning of agreements, not a transcript or an independent implementation assignment. The current user request determines the work; new explicit instructions may change decisions recorded here.
 
@@ -66,7 +66,28 @@ HALT is an example of such a message in this discussion. The architecture does n
 
 A new target changes the current intent: movement need not finish the previous maneuver before applying it. Both API forms were agreed: finite operations with an outcome, including supersession, and continuing control with an updated target, such as a joystick. Specific target-compatibility rules belong to the service contract.
 
-## Current stage: device communication
+## Current stage: RavenChick product structure
+
+Device communication reached `main` through PR #4 into `dev_rnd` and PR #5 into `main`
+(`1edceb5`). The product direction starts from that main commit: `product_raven_chick`
+is the product base, and `product_prepare_tree` contains only the structural preparation.
+Its PR targets `product_raven_chick`; this task does not update or merge into `main`.
+
+Reusable components remain in `ESP/components`. The MC/node reference projects, their
+local `bootstrap` component, defaults, and partition table are in
+`ESP/examples/device_communication`. `ESP/products/raven_chick/chick_mc` and `chick_body`
+reserve independent device projects with their own Bootstrap, Activities, Services,
+and Configuration directories; no product functionality or generic bootstrap is added.
+`ESP/components/peripheral_drivers` is reserved for future minimal peripheral wrappers.
+
+The preparation preserves runtime behavior, tests, resource profiles, and hardware
+validation utilities. Verification for this task is compilation and host tests only;
+flashing or executing firmware on physical devices is explicitly out of scope.
+See [ESP/README.md](../ESP/README.md) for the current tree and commands and
+[validation.md](../ESP/docs/validation.md) for recorded checks. Earlier hardware results
+below remain historical evidence for their respective firmware revisions.
+
+## Completed stage: device communication
 
 PR #3 was merged into `dev_rnd` (the current work's base is `02dd622`). The new stage was implemented
 in the separate worktree `D:/Git/litu_raven_communication`, branch `codex/device-communication`;

@@ -1,10 +1,10 @@
 name: Raven ESP
 on:
   pull_request:
-    branches: [dev_rnd]
+    branches: [dev_rnd, product_raven_chick]
     paths: ['ESP/**', '.github/workflows/esp.yml']
   push:
-    branches: [dev_rnd, codex/device-communication]
+    branches: [dev_rnd, codex/device-communication, product_raven_chick]
     paths: ['ESP/**', '.github/workflows/esp.yml']
 jobs:
   host:
@@ -31,4 +31,4 @@ jobs:
       - shell: bash
         run: |
           . /opt/esp/idf/export.sh
-          idf.py -C ESP/apps/${{ matrix.app }} -B "$PWD/build/${{ matrix.app }}-${{ matrix.target }}" -DIDF_TARGET=${{ matrix.target }} build
+          idf.py -C ESP/examples/device_communication/${{ matrix.app }} -B "$PWD/build/${{ matrix.app }}-${{ matrix.target }}" -DIDF_TARGET=${{ matrix.target }} build
