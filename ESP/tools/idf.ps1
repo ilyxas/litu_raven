@@ -22,7 +22,7 @@ foreach ($entry in $exports) {
 $espRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $repoRoot = (Resolve-Path (Join-Path $espRoot '..')).Path
 $buildDir = Join-Path $repoRoot "build/$App-$Target"
-$projectDir = Join-Path $espRoot "apps/$App"
+$projectDir = Join-Path $espRoot "examples/device_communication/$App"
 if (-not $IdfArguments) { $IdfArguments = @('build') }
 & $python (Join-Path $env:IDF_PATH 'tools/idf.py') -C $projectDir -B $buildDir "-DIDF_TARGET=$Target" "-DSDKCONFIG=$buildDir/sdkconfig" @IdfArguments
 exit $LASTEXITCODE

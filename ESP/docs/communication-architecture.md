@@ -16,7 +16,13 @@ does not by itself establish compliance with that specification.
 | `raven_diagnostics` | Bounded journal and SDK log assembly; no I/O |
 | `raven_platform` | OwnerTask, TCP RX/manager/channel, Wi-Fi, monotonic clock |
 | `raven_ble` | GATT transport and MC's service text console |
-| `raven_app` | Composition, lifetimes, resources, local endpoint IDs, and identity |
+| Example-local `bootstrap` | Reference composition, lifetimes, resources, local endpoint IDs, and identity |
+
+Reusable components live under `ESP/components`. The MC and node ESP-IDF projects are in
+`ESP/examples/device_communication`; both select that example's `components/bootstrap`,
+including its profile Kconfig. This composition is not part of the reusable component set.
+RavenChick's separate device directories are prepared under `ESP/products/raven_chick`;
+their own compositions and firmware have not been implemented.
 
 ```mermaid
 flowchart LR

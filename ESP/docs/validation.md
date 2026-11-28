@@ -1,6 +1,7 @@
 # Verification and Resources
 
-Current stage date: November 26, 2026. Windows host, ESP-IDF 6.1.1. The physical board count is not
+Communication stage date: November 26, 2026; structural preparation checks are recorded separately below.
+Windows host, ESP-IDF 6.1.1. The physical board count is not
 an architectural limit. Portable tests, real TCP tests, and physical-device tests are distinguished below.
 
 ## Reproduction
@@ -274,3 +275,35 @@ test has not been confirmed; mandatory-result backpressure and generation isolat
 were verified by the host regressions. The earlier four-board 30-minute soak and
 connected-BLE load results above were not repeated for this correction and remain
 evidence for their recorded earlier firmware.
+
+## RavenChick structural preparation verification (November 28, 2026)
+
+The reference projects now live in `ESP/examples/device_communication`, with an
+example-local `components/bootstrap`. Product directories contain placeholders only.
+The commands in [ESP/README.md](../README.md) use the relocated projects; use fresh
+build directories rather than CMake caches from the old layout.
+
+- Local ESP-IDF 6.1.1 builds pass for MC ESP32-S3, node ESP32, and node ESP32-S3.
+  Generated configurations retain MC's six-session/BLE profile, exclude Bluetooth
+  from both node builds, and disable test modes in all three ordinary builds.
+- A separate node ESP32 build with `RAVEN_TCP_BOARD_PROBE=y` and
+  `RAVEN_VALIDATION_MONITOR=y` also compiles and links. CMake resolves the unchanged
+  `ESP/tests/tcp_board_probe.cpp` from the relocated bootstrap. This is a build check,
+  not execution of the hardware test suite.
+- Windows host: all three CTest executables pass, covering 27 scenarios, including
+  the platform log-hook regression. Host test sources and CMake targets are unchanged.
+  Linux-only TCP receive checks and the existing sanitizer matrix remain in CI;
+  the workflow now accepts PRs targeting `product_raven_chick` as well as `dev_rnd`.
+- Kconfig contents, per-role defaults, partition contents, communication profile,
+  reusable component implementations, tests, and hardware utilities are unchanged.
+  Common defaults change only the relative partition-table path. The generated
+  partition binaries match across all three ordinary reference builds.
+- Diff review confirms that the three moved C++ sources change only the bootstrap
+  include path. The normative specification and iOS are unchanged. The immutable
+  baseline remains byte-identical to `02dd622:ESP/raven/docs/architecture.md`:
+  16,356 bytes, SHA-256 `c2afd8f1ebd9e594b4caa3c2f09b7cc4a5b4e43f70334efe5365bc171bd0faa4`.
+
+No firmware was flashed or executed on physical devices for this structural task.
+Earlier BLE, TCP, soak, and resource measurements remain evidence for their recorded
+firmware revisions, not new hardware validation of this migration. Product firmware
+is not built because its implementation and project definitions have not started.
