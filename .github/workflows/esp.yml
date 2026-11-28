@@ -1,0 +1,34 @@
+name: Raven ESP
+on:
+  pull_request:
+    branches: [dev_rnd]
+    paths: ['ESP/**', '.github/workflows/esp.yml']
+  push:
+    branches: [dev_rnd, codex/device-communication]
+    paths: ['ESP/**', '.github/workflows/esp.yml']
+jobs:
+  host:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        sanitizer: ['', address, thread]
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S ESP/tests/host -B build/host -DCMAKE_BUILD_TYPE=Debug -DRAVEN_SANITIZER=${{ matrix.sanitizer }}
+      - run: cmake --build build/host --parallel 2
+      - run: ctest --test-dir build/host --output-on-failure --timeout 30
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.1.1
+    strategy:
+      matrix:
+        include:
+          - {app: mc, target: esp32s3}
+          - {app: node, target: esp32}
+          - {app: node, target: esp32s3}
+    steps:
+      - uses: actions/checkout@v4
+      - shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py -C ESP/apps/${{ matrix.app }} -B "$PWD/build/${{ matrix.app }}-${{ matrix.target }}" -DIDF_TARGET=${{ matrix.target }} build

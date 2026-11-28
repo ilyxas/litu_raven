@@ -1,0 +1,38 @@
+menu "Raven device profile"
+config RAVEN_MISSION_COMPUTER
+    bool "Mission computer (AP/server)"
+    default n
+config RAVEN_MAX_SESSIONS
+    int "MC simultaneous TCP sessions (resource profile)"
+    range 1 10
+    default 6
+    depends on RAVEN_MISSION_COMPUTER
+config RAVEN_TCP_PORT
+    int "Device ICD TCP port"
+    range 1024 65535
+    default 8080
+config RAVEN_WIFI_SSID
+    string "Shared development network SSID"
+    default "Raven-Link"
+config RAVEN_WIFI_PASSWORD
+    string "Shared development network password"
+    default "raven-link"
+config RAVEN_BLE_ENABLED
+    bool "BLE service console"
+    depends on RAVEN_MISSION_COMPUTER && BT_NIMBLE_ENABLED
+    default y
+config RAVEN_VALIDATION_MONITOR
+    bool "Test-only UART resource and peer snapshots"
+    default n
+    help
+        Adds a low-priority 3072-byte task which prints heap/stack and peer
+        snapshots every ten seconds. Only for hardware validation builds;
+        production BLE and UART diagnostics remain event-driven.
+config RAVEN_TCP_BOARD_PROBE
+    bool "Test-only node: exercise six MC TCP sessions"
+    depends on !RAVEN_MISSION_COMPUTER
+    default n
+    help
+        Replaces normal node composition with the physical TCP validation
+        client. Disconnect normal nodes before running this test profile.
+endmenu
